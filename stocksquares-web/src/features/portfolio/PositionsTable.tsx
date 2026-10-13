@@ -1,16 +1,19 @@
 import React from 'react';
-import { PositionDto } from '../../shared/api/types';
+import { PositionDto, OrderSide } from '../../shared/dtos';
 import { useTranslation } from '../../shared/i18n/I18nContext';
-import { Briefcase, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { formatDateTime } from '../../shared/utils/date.util';
+import { Briefcase, ArrowUpRight, ArrowDownRight, ArrowRight } from 'lucide-react';
 
 interface PositionsTableProps {
   positions: PositionDto[];
   onSelectSymbol: (symbol: string) => void;
+  onTradePosition?: (symbol: string, side: OrderSide, quantity?: number) => void;
 }
 
 export const PositionsTable: React.FC<PositionsTableProps> = ({
   positions,
-  onSelectSymbol
+  onSelectSymbol,
+  onTradePosition
 }) => {
   const { t } = useTranslation();
 
@@ -27,12 +30,12 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Briefcase size={18} style={{ color: 'var(--color-brand)' }} />
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
             {t.positions}
           </h2>
         </div>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          {activePositions.length} Active Holdings
+          {activePositions.length} {t.activeHoldings}
         </span>
       </div>
 
@@ -47,13 +50,14 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
               <th>{t.marketValue}</th>
               <th>{t.unrealizedPnl}</th>
               <th>{t.realizedPnl}</th>
+              <th>{t.date}</th>
               <th>{t.action}</th>
             </tr>
           </thead>
           <tbody>
             {activePositions.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                <td colSpan={9} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
                   {t.noPositions}
                 </td>
               </tr>
@@ -65,16 +69,21 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
 
                 return (
                   <tr key={pos.symbol}>
-                    <td className="font-mono" style={{ fontWeight: 600 }}>
-                      {pos.symbol}
+                    <td className="font-mono" style={{ fontWeight: 700 }}>
+                      <span
+                        onClick={() => onSelectSymbol(pos.symbol)}
+                        style={{ cursor: 'pointer', color: 'var(--color-brand)' }}
+                      >
+                        {pos.symbol}
+                      </span>
                     </td>
 
                     <td>
-                      <div className="font-mono">
+                      <div className="font-mono" style={{ fontWeight: 600 }}>
                         <span>{pos.quantity}</span>
                         {pos.reservedQuantity > 0 && (
-                          <span style={{ fontSize: '0.6875rem', color: 'var(--color-warning)', marginLeft: '6px' }}>
-                            ({pos.reservedQuantity} locked)
+                          <span style={{ fontSize: '0.6875rem', color: 'var(--color-warning)', marginInlineStart: '6px' }}>
+                            ({pos.reservedQuantity} {t.locked})
                           </span>
                         )}
                       </div>
@@ -95,21 +104,35 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
                     <td>
                       <span className={`badge ${isPositiveUnrealized ? 'badge-up' : 'badge-down'}`}>
                         {isPositiveUnrealized ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                        {isPositiveUnrealized ? '+' : ''}${pos.unrealizedPnL.toFixed(2)} ({pnlPercent.toFixed(2)}%)
+                        <span className="font-mono">
+                          {isPositiveUnrealized ? '+' : ''}${Math.abs(pos.unrealizedPnL).toFixed(2)} ({isPositiveUnrealized ? '+' : ''}{pnlPercent.toFixed(2)}%)
+                        </span>
                       </span>
                     </td>
 
-                    <td className="font-mono" style={{ color: isPositiveRealized ? 'var(--color-up)' : 'var(--color-down)' }}>
-                      {isPositiveRealized ? '+' : ''}${pos.realizedPnL.toFixed(2)}
+                    <td>
+                      <span className="font-mono" style={{ color: isPositiveRealized ? 'var(--color-up)' : 'var(--color-down)', fontWeight: 600 }}>
+                        {isPositiveRealized ? '+' : ''}${Math.abs(pos.realizedPnL).toFixed(2)}
+                      </span>
+                    </td>
+
+                    <td className="font-mono text-muted" style={{ fontSize: '0.75rem' }}>
+                      {formatDateTime(pos.updatedAt)}
                     </td>
 
                     <td>
                       <button
                         className="btn btn-ghost"
-                        onClick={() => onSelectSymbol(pos.symbol)}
-                        style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        onClick={() => {
+                          if (onTradePosition) {
+                            onTradePosition(pos.symbol, 2, pos.availableQuantity);
+                          } else {
+                            onSelectSymbol(pos.symbol);
+                          }
+                        }}
+                        style={{ padding: '4px 12px', fontSize: '0.75rem', fontWeight: 600 }}
                       >
-                        Trade
+                        {t.close}
                       </button>
                     </td>
                   </tr>

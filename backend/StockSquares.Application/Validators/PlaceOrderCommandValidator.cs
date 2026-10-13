@@ -1,5 +1,5 @@
 using FluentValidation;
-using StockSquares.Application.Orders.Commands;
+using StockSquares.Application.DTOs.Orders;
 using StockSquares.Domain.Enums;
 
 namespace StockSquares.Application.Validators;

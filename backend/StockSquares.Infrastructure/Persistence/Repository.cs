@@ -1,14 +1,11 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.Interfaces;
 using StockSquares.Domain.Common;
 using StockSquares.Infrastructure.Data;
 
 namespace StockSquares.Infrastructure.Persistence;
 
-/// <summary>
-/// Generic repository implementation matching the Blocks architecture standard.
-/// </summary>
 public class Repository<T> : IRepository<T> where T : BaseEntity
 {
     protected readonly TradingDbContext _dbContext;
@@ -72,23 +69,5 @@ public class Repository<T> : IRepository<T> where T : BaseEntity
     public void HardDelete(T entity)
     {
         _dbContext.Set<T>().Remove(entity);
-    }
-}
-
-/// <summary>
-/// Unit of work implementation.
-/// </summary>
-public sealed class UnitOfWork : IUnitOfWork
-{
-    private readonly TradingDbContext _dbContext;
-
-    public UnitOfWork(TradingDbContext dbContext)
-    {
-        _dbContext = dbContext;
-    }
-
-    public Task SaveChangesAsync(CancellationToken cancellationToken = default)
-    {
-        return _dbContext.SaveChangesAsync(cancellationToken);
     }
 }

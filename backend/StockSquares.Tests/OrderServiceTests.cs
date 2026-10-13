@@ -1,10 +1,9 @@
 using System.Text.Json;
 using FluentAssertions;
 using Moq;
-using StockSquares.Application.Abstractions;
-using StockSquares.Application.Orders;
-using StockSquares.Application.Orders.Commands;
-using StockSquares.Application.Orders.DTOs;
+using StockSquares.Application.DTOs.Orders;
+using StockSquares.Application.Interfaces;
+using StockSquares.Application.Services;
 using StockSquares.Domain.Entities;
 using StockSquares.Domain.Enums;
 using Xunit;
@@ -69,7 +68,6 @@ public class OrderServiceTests
         result.Id.Should().Be(cachedOrder.Id);
         result.FilledPrice.Should().Be(64000m);
 
-        // Verify the trading engine was never touched for the duplicate request
         _tradingEngineMock.Verify(e => e.PlaceOrderAsync(It.IsAny<PlaceOrderCommand>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

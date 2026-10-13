@@ -65,7 +65,7 @@ graph TD
 * **StockSquares.Application**: Orchestrates use cases (`Orders/`, `Portfolio/`, `Markets/`, `Abstractions/`). Controls the serialized trading workflow and declares port interfaces.
 * **StockSquares.Infrastructure**: Adapters for Microsoft SQL Server (`TradingDbContext`, entity configurations), WebSocket ingestion (`BinanceWebSocketFeedService`), realistic Brownian motion fallback generator, and SignalR publishing.
 * **StockSquares.Api**: ASP.NET Core 10 Web API, routing, DI configuration, Swagger/OpenAPI documentation, and endpoint filters.
-* **StockSquares.Tests**: Comprehensive xUnit unit and integration test suite covering domain execution semantics, financial invariant calculations, idempotency, and concurrent order safety.
+* **StockSquares.Tests**: Comprehensive 28-test xUnit unit and integration test suite covering domain execution semantics, financial invariant calculations, idempotency, command validation, and concurrent order safety.
 
 ---
 
@@ -90,31 +90,48 @@ graph TD
 
 ---
 
-## 3. Frontend Architecture (React + TypeScript + Vite)
+## 3. Frontend Architecture (React 19 + TypeScript + Vite + RxJS)
 
-Located in `stocksquares-web/`, organized with a clean **feature-based structure**:
+Located in `stocksquares-web/`, organized with enterprise feature and shared module boundaries:
 
 ```
 stocksquares-web/
 ├── src/
 │   ├── app/                # Root App component, layout shell, providers
+│   ├── environments/       # Environment configurations (API URL, SignalR hub)
 │   ├── features/
-│   │   ├── markets/        # Live price table, 24h metrics, tick animations
-│   │   ├── orders/         # Order ticket, input validation, order history
-│   │   └── portfolio/      # Portfolio summary cards, positions table
+│   │   ├── markets/        # Live price table, 24h metrics, tick flash animations, SVG charts
+│   │   ├── orders/         # Interactive order ticket, inline validation, order history
+│   │   └── portfolio/      # Portfolio summary metric cards, open positions table, trades
 │   ├── shared/
-│   │   ├── api/            # Typed REST client, error mapping, models
-│   │   ├── realtime/       # SignalR client with auto-reconnect & typed events
-│   │   ├── i18n/           # English & Arabic translation, dynamic RTL/LTR
-│   │   └── components/     # Reusable MetricCard, StatusBadge, Navbar
-│   └── styles/             # Theme tokens, dark mode terminal styling, global CSS
+│   │   ├── services/       # Dedicated reactive domain services (RxJS Observables)
+│   │   │   ├── http/       # HttpService (cancellable via AbortController)
+│   │   │   ├── markets/    # MarketsService (Observable<MarketDto[]>)
+│   │   │   ├── orders/     # OrdersService (Observable<PagedResult<OrderDto>>)
+│   │   │   ├── portfolio/  # PortfolioService (Observable<PortfolioDto>)
+│   │   │   └── realtime/   # RealtimeService (SignalR RxJS streams: price$, order$, portfolio$)
+│   │   ├── dtos/           # Strongly typed DTOs (one per file/folder matching backend)
+│   │   │   ├── common/     # Result<T>, PagedResult<T>, PaginationRequest
+│   │   │   ├── enums/      # OrderType, OrderSide, OrderStatus, ErrorCode
+│   │   │   ├── markets/    # MarketDto
+│   │   │   ├── orders/     # OrderDto, TradeDto, PlaceOrderRequest, CancelOrderRequest
+│   │   │   ├── portfolio/  # PortfolioDto, PositionDto
+│   │   │   └── realtime/   # PriceUpdatedDto, OrderUpdatedDto, PortfolioUpdatedDto
+│   │   ├── i18n/           # English & Arabic translations with dynamic RTL/LTR direction
+│   │   ├── components/     # Reusable MetricCard, StatusBadge, ToastProvider, Navbar
+│   │   └── utils/          # Toast deduplication, error response extractors
+│   └── styles/             # Curated design tokens, financial dark theme, global CSS
 ```
 
-### Key UI Capabilities:
-* **Live Price Table**: Real-time tick flashing (`green` on upticks, `red` on downticks), showing 24h High/Low and feed source indicator. Clicking any asset populates the Order Ticket.
-* **Interactive Order Ticket**: Buy/Sell tabs, Market/Limit toggle, dynamic estimated total calculation, and max-affordability quick buttons (25%, 50%, 75%, Max).
-* **Open Positions & Order History**: Real-time unrealized P&L mark-to-market updates, weighted average entry price display, and 1-click cancellation for open limit orders.
-* **Bilingual Support (RTL/LTR)**: Instant English/Arabic toggle adjusting both copy and document direction (`dir="rtl"` vs `dir="ltr"`) with optimized typography.
+### Key UI & Architectural Capabilities:
+* **Direct Real-Time Binance WebSocket Feed**: Ingests sub-second ticker updates from Binance (`wss://stream.binance.com:9443/stream?streams=...`) with seamless automatic Brownian motion fallback if network is interrupted.
+* **Interactive Financial Price Chart**: Multi-timeframe view (`1M`, `5M`, `15M`, `1H`, `ALL`), switchable between Area/Line and Candlestick modes, featuring real timestamp & date X-axis scale, multi-level Y-axis price grid, live pulsing price badge, and interactive crosshair inspection tooltip showing exact date, time, and price.
+* **Market Watchlist with Real-Time Search**: Search bar for filtering symbols/pairs instantly, category filters (`All Markets`, `Top Gainers`, `Top Losers`, `Volume`), sortable column headers, and real-time tick flashes (`green` on upticks, `red` on downticks).
+* **Reactive RxJS Streaming**: Low-level HTTP requests and SignalR realtime subscriptions use `Observable<T>`, providing cancellation by default via `AbortController` and clean stream composition via `forkJoin`.
+* **Bulletproof Order Ticket**: Buy/Sell tabs, Market/Limit toggle, dynamic estimated total calculation, max-affordability quick buttons (25%, 50%, 75%, Max), localized numeral sanitization, and explicit execution feedback.
+* **Open Positions & Tabbed Console**: Real-time unrealized P&L mark-to-market updates, weighted average entry price display, 1-click position close/trade pre-fill, and 1-click cancellation for pending limit orders with formatted execution timestamps (`YYYY-MM-DD HH:mm:ss`).
+* **Bilingual Support (RTL/LTR)**: Instant English/Arabic toggle adjusting both copy and document direction (`dir="rtl"` vs `dir="ltr"`) with isolated BiDi numeric styling to guarantee negative signs and dollar formatting remain clean in both directions.
+* **Toast & Notification Deduplication**: Built-in 1-second deduplication preventing duplicate alerts on high-frequency market tick bursts.
 
 ---
 

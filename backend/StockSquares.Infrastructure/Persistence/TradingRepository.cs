@@ -1,36 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.Interfaces;
 using StockSquares.Domain.Entities;
 using StockSquares.Domain.Enums;
 using StockSquares.Infrastructure.Data;
 
 namespace StockSquares.Infrastructure.Persistence;
-
-public class EfTransactionScope : ITransactionScope
-{
-    private readonly IDbContextTransaction _transaction;
-
-    public EfTransactionScope(IDbContextTransaction transaction)
-    {
-        _transaction = transaction;
-    }
-
-    public Task CommitAsync(CancellationToken cancellationToken = default)
-    {
-        return _transaction.CommitAsync(cancellationToken);
-    }
-
-    public Task RollbackAsync(CancellationToken cancellationToken = default)
-    {
-        return _transaction.RollbackAsync(cancellationToken);
-    }
-
-    public ValueTask DisposeAsync()
-    {
-        return _transaction.DisposeAsync();
-    }
-}
 
 public class TradingRepository : ITradingRepository
 {
@@ -75,6 +49,21 @@ public class TradingRepository : ITradingRepository
             .Where(o => o.PortfolioId == portfolioId)
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<(List<Order> Items, int TotalCount)> GetPagedOrdersAsync(Guid portfolioId, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        var query = _context.Orders
+            .Where(o => o.PortfolioId == portfolioId)
+            .OrderByDescending(o => o.CreatedAt);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, totalCount);
     }
 
     public Task<List<Order>> GetPendingLimitOrdersAsync(string symbol, CancellationToken cancellationToken = default)

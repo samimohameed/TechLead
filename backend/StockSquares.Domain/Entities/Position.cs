@@ -29,10 +29,14 @@ public class Position : BaseEntity
     public void AddBuy(decimal buyQuantity, decimal buyPrice, DateTimeOffset timestamp)
     {
         if (buyQuantity <= 0)
+        {
             throw new DomainException("Buy quantity must be positive.", "INVALID_QUANTITY");
+        }
 
         if (buyPrice <= 0)
+        {
             throw new DomainException("Buy price must be positive.", "INVALID_PRICE");
+        }
 
         decimal totalExistingCost = Quantity * AverageEntryPrice;
         decimal incomingCost = buyQuantity * buyPrice;
@@ -47,12 +51,15 @@ public class Position : BaseEntity
     public decimal AddSell(decimal sellQuantity, decimal sellPrice, DateTimeOffset timestamp)
     {
         if (sellQuantity <= 0)
+        {
             throw new DomainException("Sell quantity must be positive.", "INVALID_QUANTITY");
+        }
 
         if (sellQuantity > Quantity)
+        {
             throw new InsufficientPositionException(Symbol, sellQuantity, Quantity);
+        }
 
-        // Realized P&L = (Sale Price - Average Entry Price) * Quantity sold
         decimal tradeRealizedPnL = Math.Round((sellPrice - AverageEntryPrice) * sellQuantity, 4);
         RealizedPnL += tradeRealizedPnL;
 
@@ -81,7 +88,9 @@ public class Position : BaseEntity
     public void ReserveQuantity(decimal quantity)
     {
         if (quantity > AvailableQuantity)
+        {
             throw new InsufficientPositionException(Symbol, quantity, AvailableQuantity);
+        }
 
         ReservedQuantity += quantity;
     }

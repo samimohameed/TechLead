@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.Interfaces;
 using StockSquares.Infrastructure.Data;
 using StockSquares.Infrastructure.Feeds;
 using StockSquares.Infrastructure.Persistence;
@@ -27,11 +27,8 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<ITradingRepository, TradingRepository>();
         services.AddScoped<IIdempotencyStore, IdempotencyStore>();
-
-        // Realtime SignalR Publisher
         services.AddScoped<IRealtimePublisher, SignalRRealtimePublisher>();
 
-        // Feeds
         services.AddSingleton<FallbackPriceGenerator>();
         services.AddSingleton<BinanceWebSocketFeedService>();
         services.AddSingleton<IPriceFeedService>(sp => sp.GetRequiredService<BinanceWebSocketFeedService>());

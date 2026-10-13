@@ -1,23 +1,8 @@
 using Microsoft.AspNetCore.SignalR;
-using StockSquares.Application.Abstractions;
 using StockSquares.Application.Events;
+using StockSquares.Application.Interfaces;
 
 namespace StockSquares.Infrastructure.Realtime;
-
-public interface ITradingHubClient
-{
-    Task PriceUpdated(PriceUpdatedEvent @event);
-    Task OrderUpdated(OrderUpdatedEvent @event);
-    Task PortfolioUpdated(PortfolioUpdatedEvent @event);
-}
-
-public class TradingHub : Hub<ITradingHubClient>
-{
-    public override async Task OnConnectedAsync()
-    {
-        await base.OnConnectedAsync();
-    }
-}
 
 public class SignalRRealtimePublisher : IRealtimePublisher
 {

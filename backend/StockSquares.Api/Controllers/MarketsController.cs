@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using StockSquares.Application.Common;
-using StockSquares.Application.Markets;
-using StockSquares.Application.Markets.DTOs;
+using StockSquares.Application.DTOs.Markets;
+using StockSquares.Application.Interfaces;
 
 namespace StockSquares.Api.Controllers;
 
@@ -16,9 +16,6 @@ public class MarketsController : ControllerBase
         _marketService = marketService;
     }
 
-    /// <summary>
-    /// Loads current market price snapshots for all tradable assets.
-    /// </summary>
     [HttpGet]
     public ActionResult<Result<IReadOnlyList<MarketDto>>> GetMarkets()
     {
@@ -26,18 +23,10 @@ public class MarketsController : ControllerBase
         return Ok(Result<IReadOnlyList<MarketDto>>.Success(markets));
     }
 
-    /// <summary>
-    /// Loads the latest price snapshot for a specific symbol.
-    /// </summary>
     [HttpGet("{symbol}")]
     public ActionResult<Result<MarketDto>> GetMarket(string symbol)
     {
         var market = _marketService.GetMarket(symbol);
-        if (market == null)
-        {
-            return NotFound(Result<MarketDto>.Failure($"Market for symbol '{symbol}' was not found.", ErrorCode.NotFound));
-        }
-
         return Ok(Result<MarketDto>.Success(market));
     }
 }

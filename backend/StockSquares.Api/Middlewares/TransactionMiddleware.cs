@@ -18,13 +18,14 @@ public class TransactionMiddleware
     {
         var method = context.Request.Method;
 
-        if (!IsWriteRequest(method) || dbContext.Database.CurrentTransaction != null)
+        var path = context.Request.Path;
+
+        if (!IsWriteRequest(method, path) || dbContext.Database.CurrentTransaction != null)
         {
             await _next(context);
             return;
         }
 
-        var path = context.Request.Path;
         _logger.LogInformation("Transaction Started | Request: {Method} {Path}", method, path);
 
         var stopwatch = Stopwatch.StartNew();
@@ -49,8 +50,13 @@ public class TransactionMiddleware
         }
     }
 
-    private static bool IsWriteRequest(string method)
+    private static bool IsWriteRequest(string method, PathString path)
     {
+        if (path.StartsWithSegments("/hubs"))
+        {
+            return false;
+        }
+
         return HttpMethods.IsPost(method) ||
                HttpMethods.IsPut(method) ||
                HttpMethods.IsPatch(method) ||

@@ -57,8 +57,16 @@ public class ExceptionHandlingMiddleware
         }
         else if (ex is DomainException domainEx)
         {
-            statusCode = HttpStatusCode.BadRequest;
-            errorCode = ErrorCode.ValidationError;
+            if (domainEx.ErrorCode.EndsWith("_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                statusCode = HttpStatusCode.NotFound;
+                errorCode = ErrorCode.NotFound;
+            }
+            else
+            {
+                statusCode = HttpStatusCode.BadRequest;
+                errorCode = ErrorCode.ValidationError;
+            }
             message = domainEx.Message;
         }
         else if (ex is UnauthorizedAccessException authEx)

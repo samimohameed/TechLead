@@ -1,12 +1,10 @@
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.DTOs.Orders;
 using StockSquares.Application.Events;
-using StockSquares.Application.Orders.Commands;
-using StockSquares.Application.Orders.DTOs;
+using StockSquares.Application.Interfaces;
 using StockSquares.Domain.Entities;
 using StockSquares.Domain.Enums;
 using StockSquares.Domain.Exceptions;
 using StockSquares.Domain.Models;
-using StockSquares.Domain.Services;
 using PortfolioEntity = StockSquares.Domain.Entities.Portfolio;
 
 namespace StockSquares.Application.Services;
@@ -16,14 +14,14 @@ public class TradingEngine : ITradingEngine
     private readonly ITradingRepository _repository;
     private readonly IPriceFeedService _priceFeed;
     private readonly IRealtimePublisher _realtimePublisher;
-    private readonly MatchingEngine _matchingEngine;
+    private readonly IMatchingEngine _matchingEngine;
     private static readonly SemaphoreSlim _executionLock = new(1, 1);
 
     public TradingEngine(
         ITradingRepository repository,
         IPriceFeedService priceFeed,
         IRealtimePublisher realtimePublisher,
-        MatchingEngine matchingEngine)
+        IMatchingEngine matchingEngine)
     {
         _repository = repository;
         _priceFeed = priceFeed;
@@ -53,7 +51,17 @@ public class TradingEngine : ITradingEngine
 
             if (command.Type == OrderType.Market)
             {
-                order = Order.CreateMarket(portfolio.Id, command.Symbol, command.Side, command.Quantity, command.IdempotencyKey);
+                order = new Order
+                {
+                    Id = Guid.NewGuid(),
+                    PortfolioId = portfolio.Id,
+                    ClientOrderId = command.IdempotencyKey,
+                    Symbol = command.Symbol.ToUpperInvariant().Trim(),
+                    Type = OrderType.Market,
+                    Side = command.Side,
+                    Quantity = command.Quantity,
+                    Status = OrderStatus.Pending
+                };
 
                 decimal executionPrice = latestTick.Price;
                 decimal estimatedCost = Math.Round(order.Quantity * executionPrice, 4);
@@ -61,13 +69,17 @@ public class TradingEngine : ITradingEngine
                 if (order.Side == OrderSide.Buy)
                 {
                     if (portfolio.CashBalance < estimatedCost)
+                    {
                         throw new InsufficientFundsException(estimatedCost, portfolio.CashBalance);
+                    }
                 }
                 else
                 {
                     var pos = portfolio.GetOrCreatePosition(order.Symbol);
                     if (pos.AvailableQuantity < order.Quantity)
+                    {
                         throw new InsufficientPositionException(order.Symbol, order.Quantity, pos.AvailableQuantity);
+                    }
                 }
 
                 var trade = _matchingEngine.ExecuteFill(portfolio, order, executionPrice, now);
@@ -76,12 +88,28 @@ public class TradingEngine : ITradingEngine
                 await _repository.AddTradeAsync(trade, cancellationToken);
                 await _repository.SaveChangesAsync(cancellationToken);
             }
-            else // Limit Order
+            else
             {
                 if (!command.LimitPrice.HasValue || command.LimitPrice.Value <= 0)
+                {
                     throw new DomainException("Limit price must be greater than zero for Limit orders.", "INVALID_LIMIT_PRICE");
+                }
 
-                order = Order.CreateLimit(portfolio.Id, command.Symbol, command.Side, command.Quantity, command.LimitPrice.Value, command.IdempotencyKey);
+                decimal limitPrice = command.LimitPrice.Value;
+                order = new Order
+                {
+                    Id = Guid.NewGuid(),
+                    PortfolioId = portfolio.Id,
+                    ClientOrderId = command.IdempotencyKey,
+                    Symbol = command.Symbol.ToUpperInvariant().Trim(),
+                    Type = OrderType.Limit,
+                    Side = command.Side,
+                    Quantity = command.Quantity,
+                    LimitPrice = limitPrice,
+                    ReservedCash = command.Side == OrderSide.Buy ? Math.Round(command.Quantity * limitPrice, 4) : 0m,
+                    ReservedQuantity = command.Side == OrderSide.Sell ? command.Quantity : 0m,
+                    Status = OrderStatus.Pending
+                };
 
                 if (order.Side == OrderSide.Buy)
                 {
@@ -95,7 +123,6 @@ public class TradingEngine : ITradingEngine
 
                 await _repository.AddOrderAsync(order, cancellationToken);
 
-                // If limit condition is already satisfied by current market price, fill immediately
                 if (_matchingEngine.CanFill(order, latestTick.Price))
                 {
                     var trade = _matchingEngine.ExecuteFill(portfolio, order, latestTick.Price, now);
@@ -107,7 +134,6 @@ public class TradingEngine : ITradingEngine
 
             await tx.CommitAsync(cancellationToken);
 
-            // Prepare events to emit strictly AFTER database transaction commit
             orderEvent = new OrderUpdatedEvent(order.Id.ToString(), order.Status.ToString());
             portfolioEvent = new PortfolioUpdatedEvent(portfolio.CashBalance, portfolio.TotalRealizedPnL, portfolio.TotalUnrealizedPnL);
         }
@@ -116,12 +142,15 @@ public class TradingEngine : ITradingEngine
             _executionLock.Release();
         }
 
-        // Publish events outside critical database lock
         if (orderEvent != null)
+        {
             await _realtimePublisher.PublishOrderUpdatedAsync(orderEvent, cancellationToken);
+        }
 
         if (portfolioEvent != null)
+        {
             await _realtimePublisher.PublishPortfolioUpdatedAsync(portfolioEvent, cancellationToken);
+        }
 
         return OrderDto.FromEntity(order);
     }
@@ -142,7 +171,9 @@ public class TradingEngine : ITradingEngine
                 ?? throw new DomainException($"Order {orderId} not found.", "ORDER_NOT_FOUND");
 
             if (order.PortfolioId != portfolioId)
+            {
                 throw new DomainException("Order does not belong to the requested portfolio.", "UNAUTHORIZED_ORDER_ACTION");
+            }
 
             portfolio = await _repository.GetPortfolioByIdAsync(portfolioId, cancellationToken)
                 ?? throw new DomainException($"Portfolio {portfolioId} not found.", "PORTFOLIO_NOT_FOUND");
@@ -161,10 +192,14 @@ public class TradingEngine : ITradingEngine
         }
 
         if (orderEvent != null)
+        {
             await _realtimePublisher.PublishOrderUpdatedAsync(orderEvent, cancellationToken);
+        }
 
         if (portfolioEvent != null)
+        {
             await _realtimePublisher.PublishPortfolioUpdatedAsync(portfolioEvent, cancellationToken);
+        }
 
         return OrderDto.FromEntity(order);
     }
@@ -187,7 +222,10 @@ public class TradingEngine : ITradingEngine
                 foreach (var order in eligibleOrders)
                 {
                     var portfolio = await _repository.GetPortfolioByIdAsync(order.PortfolioId, cancellationToken);
-                    if (portfolio == null) continue;
+                    if (portfolio == null)
+                    {
+                        continue;
+                    }
 
                     var trade = _matchingEngine.ExecuteFill(portfolio, order, tick.Price, tick.Timestamp);
                     await _repository.AddTradeAsync(trade, cancellationToken);
@@ -205,7 +243,6 @@ public class TradingEngine : ITradingEngine
             _executionLock.Release();
         }
 
-        // Broadcast order and portfolio updates strictly after commit
         foreach (var ev in filledEvents)
         {
             await _realtimePublisher.PublishOrderUpdatedAsync(ev, cancellationToken);
@@ -216,7 +253,6 @@ public class TradingEngine : ITradingEngine
             await _realtimePublisher.PublishPortfolioUpdatedAsync(ev, cancellationToken);
         }
 
-        // Always broadcast latest price tick to connected clients
         var priceEvent = new PriceUpdatedEvent(
             tick.Symbol,
             tick.Price,

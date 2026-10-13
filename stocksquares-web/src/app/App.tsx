@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { api } from '../shared/api/client';
-import { MarketDto, PortfolioDto, OrderDto, PlaceOrderRequest } from '../shared/api/types';
-import { SignalRClient } from '../shared/realtime/signalrClient';
-import { PriceUpdated, OrderUpdated, PortfolioUpdated, ConnectionState } from '../shared/realtime/types';
+import React, { useState, useEffect } from 'react';
+import { forkJoin, firstValueFrom, Subscription } from 'rxjs';
+import { marketsService, ordersService, portfolioService, realtimeService } from '../shared/services';
+import { MarketDto, PortfolioDto, OrderDto, PlaceOrderRequest, OrderSide, ConnectionState, OrderUpdated, PortfolioUpdated } from '../shared/dtos';
 import { useTranslation } from '../shared/i18n/I18nContext';
 import { useToast } from '../shared/components/Toast';
 import { extractErrorMessage } from '../shared/utils/error.util';
@@ -10,7 +9,7 @@ import { environment } from '../environments/environment';
 import { Navbar } from '../shared/components/Navbar';
 import { PortfolioSummary } from '../features/portfolio/PortfolioSummary';
 import { LivePriceTable } from '../features/markets/LivePriceTable';
-import { PriceChart } from '../features/markets/PriceChart';
+import { PriceChart, PriceTickHistoryItem } from '../features/markets/PriceChart';
 import { OrderTicket } from '../features/orders/OrderTicket';
 import { PositionsTable } from '../features/portfolio/PositionsTable';
 import { OrderHistoryTable } from '../features/orders/OrderHistoryTable';
@@ -37,76 +36,87 @@ export const App: React.FC = () => {
   // State
   const [markets, setMarkets] = useState<Record<string, MarketDto>>({});
   const [tickFlashes, setTickFlashes] = useState<Record<string, 'up' | 'down'>>({});
-  const [priceHistory, setPriceHistory] = useState<Record<string, number[]>>({});
+  const [priceHistory, setPriceHistory] = useState<Record<string, PriceTickHistoryItem[]>>({});
   const [portfolio, setPortfolio] = useState<PortfolioDto>(defaultPortfolio);
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>(environment.defaultSymbol);
+  const [ticketSide, setTicketSide] = useState<OrderSide>(1);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('Disconnected');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'trades'>('positions');
+  const [activeTab, setActiveTab] = useState<'positions' | 'openOrders' | 'orders' | 'trades'>('positions');
 
-  const signalRRef = useRef<SignalRClient | null>(null);
+  // Initial Snapshot fetch via RxJS Observable streams
+  const fetchInitialSnapshots = () => {
+    forkJoin({
+      marketsData: marketsService.getMarkets(),
+      portfolioData: portfolioService.getPortfolio(),
+      ordersData: ordersService.getOrdersList()
+    }).subscribe({
+      next: ({ marketsData, portfolioData, ordersData }) => {
+        const marketMap: Record<string, MarketDto> = {};
+        const historyMap: Record<string, PriceTickHistoryItem[]> = {};
 
-  // Initial Snapshot fetch
-  const fetchInitialSnapshots = async () => {
-    try {
-      const [marketsData, portfolioData, ordersData] = await Promise.all([
-        api.getMarkets(),
-        api.getPortfolio(),
-        api.getOrders()
-      ]);
+        const now = Date.now();
+        marketsData.forEach(m => {
+          marketMap[m.symbol] = m;
+          const base = m.price;
+          const points: PriceTickHistoryItem[] = [];
+          // Pre-populate 20 historical ticks preceding the current snapshot so chart has real timestamps and dates
+          for (let i = 20; i >= 1; i--) {
+            const time = now - i * 10000;
+            const variance = (Math.sin(i / 2) * 0.0006 + (Math.random() - 0.5) * 0.0004) * base;
+            points.push({ timestamp: time, price: Number((base + variance).toFixed(4)) });
+          }
+          points.push({ timestamp: now, price: base });
+          historyMap[m.symbol] = points;
+        });
 
-      const marketMap: Record<string, MarketDto> = {};
-      const historyMap: Record<string, number[]> = {};
+        setMarkets(marketMap);
+        setPriceHistory(historyMap);
+        setPortfolio(portfolioData);
+        setOrders(ordersData);
 
-      marketsData.forEach(m => {
-        marketMap[m.symbol] = m;
-        historyMap[m.symbol] = [m.price];
-      });
-
-      setMarkets(marketMap);
-      setPriceHistory(historyMap);
-      setPortfolio(portfolioData);
-      setOrders(ordersData);
-
-      if (marketsData.length > 0 && !selectedSymbol) {
-        setSelectedSymbol(marketsData[0].symbol);
+        if (marketsData.length > 0 && !selectedSymbol) {
+          setSelectedSymbol(marketsData[0].symbol);
+        }
+      },
+      error: (err: any) => {
+        console.error('Failed to load initial data snapshot:', err);
+        const { message } = extractErrorMessage(err);
+        showError(t.connectionErrorTitle, message);
       }
-    } catch (err: any) {
-      console.error('Failed to load initial data snapshot:', err);
-      const { message } = extractErrorMessage(err);
-      showError('Connection Error', message);
-    }
+    });
   };
 
   useEffect(() => {
     fetchInitialSnapshots();
 
-    // Setup SignalR
-    const client = new SignalRClient(environment.signalRHubUrl);
-    signalRRef.current = client;
+    realtimeService.connect();
 
-    client.setCallbacks(
-      (state) => {
+    const sub = new Subscription();
+
+    sub.add(
+      realtimeService.connectionState$.subscribe(state => {
         setConnectionState(state);
         if (state === 'Connected') {
-          showInfo('Live Feed Connected', 'Receiving real-time prices and order events.');
+          showInfo(t.liveFeedConnectedTitle, t.liveFeedConnectedMsg);
         }
-      },
-      () => {
-        // After reconnecting, refresh snapshots as required
-        console.log('SignalR reconnected, refreshing snapshots...');
-        fetchInitialSnapshots();
-        showInfo('Reconnected', 'Synchronized latest market and portfolio snapshots.');
-      }
+      })
     );
 
-    client.start(
-      // On PriceUpdated
-      (event: PriceUpdated) => {
+    sub.add(
+      realtimeService.reconnected$.subscribe(() => {
+        console.log('SignalR reconnected, refreshing snapshots...');
+        fetchInitialSnapshots();
+        showInfo(t.reconnectedTitle, t.reconnectedMsg);
+      })
+    );
+
+    sub.add(
+      realtimeService.price$.subscribe(event => {
         setMarkets(prev => {
           const old = prev[event.symbol];
           const newPrice = event.price;
@@ -136,10 +146,11 @@ export const App: React.FC = () => {
           };
         });
 
-        // Append to sparkline price history
+        // Append to timestamped price history
         setPriceHistory(prev => {
           const current = prev[event.symbol] || [];
-          const updated = [...current, event.price].slice(-40); // keep last 40 ticks
+          const tickTime = event.timestamp ? new Date(event.timestamp).getTime() : Date.now();
+          const updated = [...current, { timestamp: tickTime, price: event.price }].slice(-120);
           return { ...prev, [event.symbol]: updated };
         });
 
@@ -174,21 +185,32 @@ export const App: React.FC = () => {
             totalReturnPercentage
           };
         });
-      },
+      })
+    );
 
-      // On OrderUpdated
-      (event: OrderUpdated) => {
-        // Refresh orders & portfolio
-        api.getOrders().then(setOrders).catch(console.error);
-        api.getPortfolio().then(setPortfolio).catch(console.error);
+    // On OrderUpdated
+    sub.add(
+      realtimeService.order$.subscribe((event: OrderUpdated) => {
+        forkJoin({
+          orders: ordersService.getOrdersList(),
+          portfolio: portfolioService.getPortfolio()
+        }).subscribe({
+          next: ({ orders: o, portfolio: p }) => {
+            setOrders(o);
+            setPortfolio(p);
+          },
+          error: console.error
+        });
 
         if (event.status === 'Filled') {
-          showSuccess('Order Filled!', `Order ${event.orderId.substring(0, 8)} has executed against the market.`);
+          showSuccess(t.orderFilledTitle, `${t.orderExecutedAgainstMarket} (${event.orderId.substring(0, 8)})`);
         }
-      },
+      })
+    );
 
-      // On PortfolioUpdated
-      (event: PortfolioUpdated) => {
+    // On PortfolioUpdated
+    sub.add(
+      realtimeService.portfolio$.subscribe((event: PortfolioUpdated) => {
         setPortfolio(prev => ({
           ...prev,
           availableCash: event.availableCash,
@@ -197,11 +219,12 @@ export const App: React.FC = () => {
           totalCash: event.availableCash + prev.reservedCash,
           totalEquity: event.availableCash + prev.reservedCash + prev.positions.reduce((sum, p) => sum + p.marketValue, 0)
         }));
-      }
+      })
     );
 
     return () => {
-      client.stop();
+      sub.unsubscribe();
+      realtimeService.disconnect();
     };
   }, []);
 
@@ -209,19 +232,24 @@ export const App: React.FC = () => {
   const handlePlaceOrder = async (req: PlaceOrderRequest) => {
     setIsSubmittingOrder(true);
     try {
-      const order = await api.placeOrder(req);
-      const [p, o] = await Promise.all([api.getPortfolio(), api.getOrders()]);
+      const order = await firstValueFrom(ordersService.placeOrder(req));
+      const { portfolio: p, orders: o } = await firstValueFrom(
+        forkJoin({
+          portfolio: portfolioService.getPortfolio(),
+          orders: ordersService.getOrdersList()
+        })
+      );
       setPortfolio(p);
       setOrders(o);
 
       if (order.status === 2) { // Filled
-        showSuccess(t.orderPlacedSuccess, `${req.side === 1 ? 'Bought' : 'Sold'} ${req.quantity} ${req.symbol} @ $${order.filledPrice}`);
+        showSuccess(t.orderPlacedSuccess, `${req.side === 1 ? t.boughtAction : t.soldAction} ${req.quantity} ${req.symbol} @ $${order.filledPrice}`);
       } else {
-        showInfo('Limit Order Queued', `Limit order submitted at $${req.limitPrice}. Waiting for market price to reach limit.`);
+        showInfo(t.limitQueuedTitle, t.limitQueuedMsg);
       }
     } catch (err: any) {
       const { message } = extractErrorMessage(err);
-      showError('Order Failed', message);
+      showError(t.orderFailedTitle, message);
       throw err;
     } finally {
       setIsSubmittingOrder(false);
@@ -231,37 +259,54 @@ export const App: React.FC = () => {
   const handleCancelOrder = async (orderId: string) => {
     setCancellingOrderId(orderId);
     try {
-      await api.cancelOrder(orderId);
-      const [p, o] = await Promise.all([api.getPortfolio(), api.getOrders()]);
+      await firstValueFrom(ordersService.cancelOrder(orderId));
+      const { portfolio: p, orders: o } = await firstValueFrom(
+        forkJoin({
+          portfolio: portfolioService.getPortfolio(),
+          orders: ordersService.getOrdersList()
+        })
+      );
       setPortfolio(p);
       setOrders(o);
-      showSuccess(t.orderCancelledSuccess, 'Reserved balance refunded.');
+      showSuccess(t.orderCancelledSuccess, t.refundedBalanceMsg);
     } catch (err: any) {
       const { message } = extractErrorMessage(err);
-      showError('Cancellation Failed', message);
+      showError(t.cancellationFailedTitle, message);
     } finally {
       setCancellingOrderId(null);
     }
   };
 
   const handleResetPortfolio = async () => {
-    if (!window.confirm('Reset virtual portfolio to initial $50,000 cash balance?')) return;
+    if (!window.confirm(t.resetConfirmPrompt)) return;
     setIsResetting(true);
     try {
-      const p = await api.resetPortfolio();
-      const o = await api.getOrders();
+      const { portfolio: p, orders: o } = await firstValueFrom(
+        forkJoin({
+          portfolio: portfolioService.resetPortfolio(),
+          orders: ordersService.getOrdersList()
+        })
+      );
       setPortfolio(p);
       setOrders(o);
-      showSuccess('Portfolio Reset', 'Virtual balance restored to $50,000.00 cash.');
+      showSuccess(t.resetSuccessTitle, t.resetSuccessMsg);
     } catch (err: any) {
       const { message } = extractErrorMessage(err);
-      showError('Reset Failed', message);
+      showError(t.resetFailedTitle, message);
     } finally {
       setIsResetting(false);
     }
   };
 
+  const handleTradePosition = (symbol: string, side: OrderSide) => {
+    setSelectedSymbol(symbol);
+    setTicketSide(side);
+    // Smooth scroll to top/order ticket if needed
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const currentHistory = priceHistory[selectedSymbol] || [];
+  const openOrdersCount = orders.filter(o => o.status === 1).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', gap: '20px' }}>
@@ -269,21 +314,22 @@ export const App: React.FC = () => {
         connectionState={connectionState}
         onResetPortfolio={handleResetPortfolio}
         isResetting={isResetting}
+        onReconnect={() => realtimeService.connect()}
       />
 
-      <main style={{ padding: '0 24px 40px 24px', maxWidth: '1440px', width: '100%', margin: '0 auto' }}>
-        {/* Portfolio Summary Metrics */}
+      <main style={{ padding: '0 24px 48px 24px', maxWidth: '1480px', width: '100%', margin: '0 auto' }}>
+        {/* Portfolio Summary Metrics Bar */}
         <PortfolioSummary portfolio={portfolio} />
 
-        {/* Trading Dashboard Layout */}
+        {/* Main Trading Terminal Grid */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 2fr) minmax(320px, 1fr)',
+          gridTemplateColumns: 'minmax(0, 1.9fr) minmax(340px, 1.1fr)',
           gap: '24px',
           alignItems: 'start'
         }}>
-          {/* Main Content Area */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Left Column: Interactive Price Chart & Live Market Watch */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
             {/* Live Chart for selected symbol */}
             <PriceChart
               symbol={selectedSymbol}
@@ -291,72 +337,101 @@ export const App: React.FC = () => {
               priceHistory={currentHistory}
             />
 
-            {/* Markets Table */}
+            {/* Markets Watchlist Table with Search & Categories */}
             <LivePriceTable
               markets={markets}
               tickFlashes={tickFlashes}
               selectedSymbol={selectedSymbol}
-              onSelectSymbol={setSelectedSymbol}
+              onSelectSymbol={s => {
+                setSelectedSymbol(s);
+                setTicketSide(1);
+              }}
             />
-
-            {/* Tabs for Positions, Orders, and Executions */}
-            <div className="glass-panel" style={{ padding: '8px', display: 'flex', gap: '8px', width: 'fit-content' }}>
-              <button
-                className={`btn ${activeTab === 'positions' ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setActiveTab('positions')}
-                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
-              >
-                {t.positions} ({portfolio.positions.filter(p => p.quantity > 0).length})
-              </button>
-              <button
-                className={`btn ${activeTab === 'orders' ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setActiveTab('orders')}
-                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
-              >
-                {t.orderHistory} ({orders.length})
-              </button>
-              <button
-                className={`btn ${activeTab === 'trades' ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setActiveTab('trades')}
-                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
-              >
-                Recent Executions ({portfolio.recentTrades?.length || 0})
-              </button>
-            </div>
-
-            {/* Tab content view */}
-            {activeTab === 'positions' && (
-              <PositionsTable
-                positions={portfolio.positions}
-                onSelectSymbol={setSelectedSymbol}
-              />
-            )}
-
-            {activeTab === 'orders' && (
-              <OrderHistoryTable
-                orders={orders}
-                onCancelOrder={handleCancelOrder}
-                cancellingOrderId={cancellingOrderId}
-              />
-            )}
-
-            {activeTab === 'trades' && (
-              <RecentTradesTable
-                trades={portfolio.recentTrades || []}
-              />
-            )}
           </div>
 
-          {/* Sticky Order Ticket */}
-          <div style={{ position: 'sticky', top: '24px' }}>
+          {/* Right Column: Sticky Order Execution Ticket */}
+          <div style={{ position: 'sticky', top: '20px' }}>
             <OrderTicket
               selectedSymbol={selectedSymbol}
               market={markets[selectedSymbol]}
               portfolio={portfolio}
               onPlaceOrder={handlePlaceOrder}
               isSubmitting={isSubmittingOrder}
+              initialSide={ticketSide}
             />
           </div>
+        </div>
+
+        {/* Bottom Section: Tabs for Positions, Open Orders, Order History, and Executions */}
+        <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Tab Selection Navigation */}
+          <div className="glass-panel" style={{
+            padding: '6px',
+            display: 'inline-flex',
+            gap: '6px',
+            width: 'fit-content',
+            borderRadius: 'var(--radius-md)'
+          }}>
+            <button
+              className={`btn ${activeTab === 'positions' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setActiveTab('positions')}
+              style={{ padding: '7px 16px', fontSize: '0.8125rem', fontWeight: 600 }}
+            >
+              {t.positions} ({portfolio.positions.filter(p => p.quantity > 0).length})
+            </button>
+            <button
+              className={`btn ${activeTab === 'openOrders' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setActiveTab('openOrders')}
+              style={{ padding: '7px 16px', fontSize: '0.8125rem', fontWeight: 600 }}
+            >
+              {t.pendingOrders} ({openOrdersCount})
+            </button>
+            <button
+              className={`btn ${activeTab === 'orders' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setActiveTab('orders')}
+              style={{ padding: '7px 16px', fontSize: '0.8125rem', fontWeight: 600 }}
+            >
+              {t.orderHistory} ({orders.length})
+            </button>
+            <button
+              className={`btn ${activeTab === 'trades' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setActiveTab('trades')}
+              style={{ padding: '7px 16px', fontSize: '0.8125rem', fontWeight: 600 }}
+            >
+              {t.recentTrades} ({portfolio.recentTrades?.length || 0})
+            </button>
+          </div>
+
+          {/* Tab Views */}
+          {activeTab === 'positions' && (
+            <PositionsTable
+              positions={portfolio.positions}
+              onSelectSymbol={setSelectedSymbol}
+              onTradePosition={handleTradePosition}
+            />
+          )}
+
+          {activeTab === 'openOrders' && (
+            <OrderHistoryTable
+              orders={orders.filter(o => o.status === 1)}
+              onCancelOrder={handleCancelOrder}
+              cancellingOrderId={cancellingOrderId}
+            />
+          )}
+
+          {activeTab === 'orders' && (
+            <OrderHistoryTable
+              orders={orders}
+              onCancelOrder={handleCancelOrder}
+              cancellingOrderId={cancellingOrderId}
+            />
+          )}
+
+          {activeTab === 'trades' && (
+            <RecentTradesTable
+              trades={portfolio.recentTrades || []}
+            />
+          )}
         </div>
       </main>
     </div>

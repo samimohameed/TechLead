@@ -53,17 +53,14 @@ public class PortfolioTests
         var position = portfolio.GetOrCreatePosition("BTCUSDT");
         var now = DateTimeOffset.UtcNow;
 
-        // Buy 1.0 BTC @ $50,000 -> Cost = $50,000, Avg = $50,000
         position.AddBuy(1.0m, 50000m, now);
         position.Quantity.Should().Be(1.0m);
         position.AverageEntryPrice.Should().Be(50000m);
 
-        // Buy 1.0 BTC @ $70,000 -> Total Cost = $120,000, Total Qty = 2.0 -> Avg = $60,000
         position.AddBuy(1.0m, 70000m, now);
         position.Quantity.Should().Be(2.0m);
         position.AverageEntryPrice.Should().Be(60000m);
 
-        // Buy 2.0 BTC @ $80,000 -> Total Cost = $120,000 + $160,000 = $280,000, Total Qty = 4.0 -> Avg = $70,000
         position.AddBuy(2.0m, 80000m, now);
         position.Quantity.Should().Be(4.0m);
         position.AverageEntryPrice.Should().Be(70000m);
@@ -76,20 +73,17 @@ public class PortfolioTests
         var position = portfolio.GetOrCreatePosition("ETHUSDT");
         var now = DateTimeOffset.UtcNow;
 
-        // Buy 10 ETH @ $3,000 -> Cost = $30,000
         position.AddBuy(10m, 3000m, now);
 
-        // Sell 4 ETH @ $3,500 -> Profit = (3,500 - 3,000) * 4 = +$2,000
         decimal pnl1 = position.AddSell(4m, 3500m, now);
         pnl1.Should().Be(2000m);
         position.RealizedPnL.Should().Be(2000m);
         position.Quantity.Should().Be(6m);
-        position.AverageEntryPrice.Should().Be(3000m); // Entry price unchanged
+        position.AverageEntryPrice.Should().Be(3000m);
 
-        // Sell remaining 6 ETH @ $2,800 -> Loss = (2,800 - 3,000) * 6 = -$1,200
         decimal pnl2 = position.AddSell(6m, 2800m, now);
         pnl2.Should().Be(-1200m);
-        position.RealizedPnL.Should().Be(800m); // Cumulative: +2,000 - 1,200 = +800
+        position.RealizedPnL.Should().Be(800m);
         position.Quantity.Should().Be(0m);
         position.AverageEntryPrice.Should().Be(0m);
     }
@@ -118,12 +112,11 @@ public class PortfolioTests
 
         position.AddBuy(2.0m, 60000m, now);
 
-        // Price rises to 65,000
         position.MarkToMarket(65000m, now);
 
         position.CurrentPrice.Should().Be(65000m);
-        position.MarketValue.Should().Be(130000m); // 2 * 65,000
-        position.CostBasis.Should().Be(120000m);   // 2 * 60,000
-        position.UnrealizedPnL.Should().Be(10000m); // (65,000 - 60,000) * 2
+        position.MarketValue.Should().Be(130000m);
+        position.CostBasis.Should().Be(120000m);
+        position.UnrealizedPnL.Should().Be(10000m);
     }
 }

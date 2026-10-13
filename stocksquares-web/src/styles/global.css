@@ -46,10 +46,25 @@ body::before {
   background: var(--text-muted);
 }
 
-/* Numeric monospace utility */
+/* Numeric monospace utility - enforced LTR isolation for currencies & percentages */
 .font-mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+span.font-mono, div.font-mono {
+  display: inline-block;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+td.font-mono, th.font-mono {
+  display: table-cell !important;
+  direction: ltr;
+  unicode-bidi: isolate;
+  vertical-align: middle;
 }
 
 /* Cards & Glassmorphism */

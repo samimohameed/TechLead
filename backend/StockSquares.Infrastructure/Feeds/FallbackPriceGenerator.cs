@@ -10,12 +10,12 @@ public class FallbackPriceGenerator
 
     private static readonly Dictionary<string, (decimal BasePrice, decimal Volatility)> InitialConfigs = new()
     {
-        { "BTCUSDT", (64500.00m, 0.0015m) },
-        { "ETHUSDT", (3450.00m, 0.0020m) },
+        { "BTCUSDT", (83500.00m, 0.0015m) },
+        { "ETHUSDT", (2650.00m, 0.0020m) },
         { "SOLUSDT", (155.00m, 0.0035m) },
         { "BNBUSDT", (580.00m, 0.0018m) },
-        { "ADAUSDT", (0.42m, 0.0040m) },
-        { "DOGEUSDT", (0.125m, 0.0050m) }
+        { "ADAUSDT", (0.35m, 0.0040m) },
+        { "DOGEUSDT", (0.12m, 0.0050m) }
     };
 
     public FallbackPriceGenerator()
@@ -38,7 +38,11 @@ public class FallbackPriceGenerator
 
     public PriceTick? GetPrice(string symbol)
     {
-        return _prices.TryGetValue(symbol.ToUpperInvariant().Trim(), out var tick) ? tick : null;
+        if (_prices.TryGetValue(symbol.ToUpperInvariant().Trim(), out var tick))
+        {
+            return tick;
+        }
+        return null;
     }
 
     public IReadOnlyDictionary<string, PriceTick> GetAllPrices()
@@ -50,17 +54,44 @@ public class FallbackPriceGenerator
     {
         var normalized = symbol.ToUpperInvariant().Trim();
         var current = GetPrice(normalized);
-        decimal currentPrice = current?.Price ?? (InitialConfigs.TryGetValue(normalized, out var cfg) ? cfg.BasePrice : 100m);
-        decimal vol = InitialConfigs.TryGetValue(normalized, out var c) ? c.Volatility : 0.002m;
+        decimal currentPrice;
+        if (current != null)
+        {
+            currentPrice = current.Price;
+        }
+        else if (InitialConfigs.TryGetValue(normalized, out var cfg))
+        {
+            currentPrice = cfg.BasePrice;
+        }
+        else
+        {
+            currentPrice = 100m;
+        }
 
-        // Geometric Brownian motion step: random delta [-vol, +vol]
+        decimal vol = 0.002m;
+        if (InitialConfigs.TryGetValue(normalized, out var c))
+        {
+            vol = c.Volatility;
+        }
+
         double deltaPercent = (_random.NextDouble() * 2.0 - 1.0) * (double)vol;
-        decimal newPrice = Math.Round(currentPrice * (1m + (decimal)deltaPercent), normalized == "ADAUSDT" || normalized == "DOGEUSDT" ? 6 : 2);
+        int decimals = 2;
+        if (normalized == "ADAUSDT" || normalized == "DOGEUSDT")
+        {
+            decimals = 6;
+        }
+        decimal newPrice = Math.Round(currentPrice * (1m + (decimal)deltaPercent), decimals);
 
-        decimal basePrice = InitialConfigs.TryGetValue(normalized, out var initCfg) ? initCfg.BasePrice : currentPrice;
+        decimal basePrice = currentPrice;
+        if (InitialConfigs.TryGetValue(normalized, out var initCfg))
+        {
+            basePrice = initCfg.BasePrice;
+        }
+
         decimal change24h = Math.Round(((newPrice - basePrice) / basePrice) * 100m, 2);
         decimal high24h = Math.Max(current?.High24h ?? newPrice, newPrice);
         decimal low24h = Math.Min(current?.Low24h ?? newPrice, newPrice);
+        decimal volume24h = (current?.Volume24h ?? 100000m) + Math.Round((decimal)(_random.NextDouble() * 50), 2);
 
         var tick = new PriceTick(
             normalized,
@@ -68,7 +99,7 @@ public class FallbackPriceGenerator
             change24h,
             high24h,
             low24h,
-            (current?.Volume24h ?? 100000m) + Math.Round((decimal)(_random.NextDouble() * 50), 2),
+            volume24h,
             DateTimeOffset.UtcNow,
             source
         );

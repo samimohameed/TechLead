@@ -1,8 +1,8 @@
 using FluentAssertions;
+using StockSquares.Application.Services;
 using StockSquares.Domain.Entities;
 using StockSquares.Domain.Enums;
 using StockSquares.Domain.Exceptions;
-using StockSquares.Domain.Services;
 using Xunit;
 
 namespace StockSquares.Tests;
@@ -15,29 +15,57 @@ public class MatchingEngineTests
     [Fact]
     public void CanFill_MarketOrder_ReturnsTrueWhenPricePositive()
     {
-        var order = Order.CreateMarket(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.5m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.5m,
+            Type = OrderType.Market,
+            Status = OrderStatus.Pending
+        };
 
         _engine.CanFill(order, 60000m).Should().BeTrue();
     }
 
     [Theory]
-    [InlineData(60000, 60000, true)]   // Exactly at limit
-    [InlineData(60000, 59500, true)]   // Price dropped below limit (favorable)
-    [InlineData(60000, 60500, false)]  // Price above limit (not reached)
+    [InlineData(60000, 60000, true)]
+    [InlineData(60000, 59500, true)]
+    [InlineData(60000, 60500, false)]
     public void CanFill_LimitBuy_RespectsPriceBoundary(decimal limitPrice, decimal marketPrice, bool expectedCanFill)
     {
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.0m, limitPrice);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.0m,
+            LimitPrice = limitPrice,
+            Type = OrderType.Limit,
+            ReservedCash = Math.Round(1.0m * limitPrice, 4),
+            Status = OrderStatus.Pending
+        };
 
         _engine.CanFill(order, marketPrice).Should().Be(expectedCanFill);
     }
 
     [Theory]
-    [InlineData(60000, 60000, true)]   // Exactly at limit
-    [InlineData(60000, 60500, true)]   // Price rose above limit (favorable)
-    [InlineData(60000, 59500, false)]  // Price below limit (not reached)
+    [InlineData(60000, 60000, true)]
+    [InlineData(60000, 60500, true)]
+    [InlineData(60000, 59500, false)]
     public void CanFill_LimitSell_RespectsPriceBoundary(decimal limitPrice, decimal marketPrice, bool expectedCanFill)
     {
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Sell, 1.0m, limitPrice);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Sell,
+            Quantity = 1.0m,
+            LimitPrice = limitPrice,
+            Type = OrderType.Limit,
+            ReservedQuantity = 1.0m,
+            Status = OrderStatus.Pending
+        };
 
         _engine.CanFill(order, marketPrice).Should().Be(expectedCanFill);
     }
@@ -45,9 +73,17 @@ public class MatchingEngineTests
     [Fact]
     public void DetermineExecutionPrice_HonorsPriceImprovementForLimitBuy()
     {
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.0m, 60000m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.0m,
+            LimitPrice = 60000m,
+            Type = OrderType.Limit,
+            Status = OrderStatus.Pending
+        };
 
-        // Limit was 60,000, but market dropped to 59,500. Buyer gets the better price of 59,500.
         decimal execPrice = _engine.DetermineExecutionPrice(order, 59500m);
 
         execPrice.Should().Be(59500m);
@@ -56,9 +92,17 @@ public class MatchingEngineTests
     [Fact]
     public void DetermineExecutionPrice_HonorsPriceImprovementForLimitSell()
     {
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Sell, 1.0m, 60000m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Sell,
+            Quantity = 1.0m,
+            LimitPrice = 60000m,
+            Type = OrderType.Limit,
+            Status = OrderStatus.Pending
+        };
 
-        // Limit was 60,000, but market rallied to 60,500. Seller gets 60,500.
         decimal execPrice = _engine.DetermineExecutionPrice(order, 60500m);
 
         execPrice.Should().Be(60500m);
@@ -68,7 +112,15 @@ public class MatchingEngineTests
     public void ExecuteFill_MarketBuy_DeductsCashAndIncreasesPosition()
     {
         var portfolio = new Portfolio(_portfolioId, "user-1", 100000m);
-        var order = Order.CreateMarket(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.0m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.0m,
+            Type = OrderType.Market,
+            Status = OrderStatus.Pending
+        };
         var timestamp = DateTimeOffset.UtcNow;
 
         var trade = _engine.ExecuteFill(portfolio, order, 60000m, timestamp);
@@ -81,7 +133,7 @@ public class MatchingEngineTests
         order.Status.Should().Be(OrderStatus.Filled);
         order.FilledPrice.Should().Be(60000m);
 
-        portfolio.CashBalance.Should().Be(40000m); // 100,000 - 60,000
+        portfolio.CashBalance.Should().Be(40000m);
 
         var pos = portfolio.GetOrCreatePosition("BTCUSDT");
         pos.Quantity.Should().Be(1.0m);
@@ -92,19 +144,26 @@ public class MatchingEngineTests
     public void ExecuteFill_LimitBuy_SettlesFromReservedCashAndRefundsPriceImprovement()
     {
         var portfolio = new Portfolio(_portfolioId, "user-1", 100000m);
-        // User sets limit buy at 60,000 for 1 BTC -> reserves 60,000
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.0m, 60000m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.0m,
+            LimitPrice = 60000m,
+            Type = OrderType.Limit,
+            ReservedCash = 60000m,
+            Status = OrderStatus.Pending
+        };
         portfolio.ReserveCash(order.ReservedCash);
 
         portfolio.CashBalance.Should().Be(40000m);
         portfolio.ReservedCash.Should().Be(60000m);
 
-        // Filled at improved price 58,000!
         var trade = _engine.ExecuteFill(portfolio, order, 58000m, DateTimeOffset.UtcNow);
 
         trade.Price.Should().Be(58000m);
         portfolio.ReservedCash.Should().Be(0m);
-        // 40,000 + (60,000 reserved - 58,000 actual) = 42,000
         portfolio.CashBalance.Should().Be(42000m);
 
         var pos = portfolio.GetOrCreatePosition("BTCUSDT");
@@ -116,7 +175,17 @@ public class MatchingEngineTests
     public void CancelOrder_LimitBuy_ReleasesReservedCashToAvailableBalance()
     {
         var portfolio = new Portfolio(_portfolioId, "user-1", 100000m);
-        var order = Order.CreateLimit(_portfolioId, "BTCUSDT", OrderSide.Buy, 1.0m, 60000m);
+        var order = new Order
+        {
+            PortfolioId = _portfolioId,
+            Symbol = "BTCUSDT",
+            Side = OrderSide.Buy,
+            Quantity = 1.0m,
+            LimitPrice = 60000m,
+            Type = OrderType.Limit,
+            ReservedCash = 60000m,
+            Status = OrderStatus.Pending
+        };
         portfolio.ReserveCash(order.ReservedCash);
 
         portfolio.CashBalance.Should().Be(40000m);

@@ -13,7 +13,10 @@ public class ValidationActionFilter : IAsyncActionFilter
 
         foreach (var argument in context.ActionArguments.Values)
         {
-            if (argument == null) continue;
+            if (argument == null)
+            {
+                continue;
+            }
 
             var validatorType = typeof(IValidator<>).MakeGenericType(argument.GetType());
             if (serviceProvider.GetService(validatorType) is IValidator validator)
@@ -31,7 +34,7 @@ public class ValidationActionFilter : IAsyncActionFilter
                         );
 
                     context.Result = new BadRequestObjectResult(Result<object>.ValidationError(errors));
-                    return; // Short-circuit pipeline with structured validation error
+                    return;
                 }
             }
         }

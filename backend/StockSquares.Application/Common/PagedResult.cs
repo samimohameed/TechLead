@@ -1,8 +1,5 @@
 namespace StockSquares.Application.Common;
 
-/// <summary>
-/// Standard paginated wrapper matching the Blocks enterprise standard.
-/// </summary>
 public class PagedResult<T>
 {
     public int Page { get; set; }

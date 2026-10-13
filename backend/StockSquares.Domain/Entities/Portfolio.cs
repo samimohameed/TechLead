@@ -47,10 +47,14 @@ public class Portfolio : BaseEntity
     public void ReserveCash(decimal amount)
     {
         if (amount <= 0)
+        {
             throw new DomainException("Amount to reserve must be greater than zero.", "INVALID_AMOUNT");
+        }
 
         if (CashBalance < amount)
+        {
             throw new InsufficientFundsException(amount, CashBalance);
+        }
 
         CashBalance = Math.Round(CashBalance - amount, 4);
         ReservedCash = Math.Round(ReservedCash + amount, 4);
@@ -59,7 +63,10 @@ public class Portfolio : BaseEntity
 
     public void ReleaseReservedCash(decimal amount)
     {
-        if (amount <= 0) return;
+        if (amount <= 0)
+        {
+            return;
+        }
 
         decimal toRelease = Math.Min(ReservedCash, amount);
         ReservedCash = Math.Round(ReservedCash - toRelease, 4);
@@ -70,10 +77,14 @@ public class Portfolio : BaseEntity
     public void DeductCash(decimal amount)
     {
         if (amount <= 0)
+        {
             throw new DomainException("Amount to deduct must be greater than zero.", "INVALID_AMOUNT");
+        }
 
         if (CashBalance < amount)
+        {
             throw new InsufficientFundsException(amount, CashBalance);
+        }
 
         CashBalance = Math.Round(CashBalance - amount, 4);
         UpdatedAt = DateTimeOffset.UtcNow;
@@ -82,7 +93,9 @@ public class Portfolio : BaseEntity
     public void AddCash(decimal amount)
     {
         if (amount <= 0)
+        {
             throw new DomainException("Amount to add must be positive.", "INVALID_AMOUNT");
+        }
 
         CashBalance = Math.Round(CashBalance + amount, 4);
         UpdatedAt = DateTimeOffset.UtcNow;
@@ -91,14 +104,17 @@ public class Portfolio : BaseEntity
     public void SettleBuyFromReservedCash(decimal actualCost, decimal previouslyReserved)
     {
         if (actualCost <= 0)
+        {
             throw new DomainException("Actual cost must be positive.", "INVALID_AMOUNT");
+        }
 
         if (previouslyReserved > ReservedCash)
+        {
             previouslyReserved = ReservedCash;
+        }
 
         ReservedCash = Math.Round(ReservedCash - previouslyReserved, 4);
 
-        // Price improvement: if actual purchase cost is less than reserved limit price, return excess to free balance
         decimal difference = previouslyReserved - actualCost;
         if (difference > 0)
         {

@@ -1,4 +1,4 @@
-import { ErrorCode } from '../api/types';
+import { ErrorCode } from '../dtos';
 
 export interface FormattedError {
   message: string;

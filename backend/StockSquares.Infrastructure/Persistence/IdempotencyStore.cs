@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.Interfaces;
 using StockSquares.Infrastructure.Data;
 
 namespace StockSquares.Infrastructure.Persistence;
@@ -51,7 +51,6 @@ public class IdempotencyStore : IIdempotencyStore
         }
         catch (DbUpdateException)
         {
-            // Already inserted concurrently by another request
         }
     }
 }

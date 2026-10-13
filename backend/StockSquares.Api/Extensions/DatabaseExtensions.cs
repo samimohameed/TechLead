@@ -16,7 +16,6 @@ public static class DatabaseExtensions
         {
             await context.Database.EnsureCreatedAsync();
 
-            // Seed default trader portfolio if not present
             var existing = await context.Portfolios.FirstOrDefaultAsync(p => p.UserId == "trader-1");
             if (existing == null)
             {

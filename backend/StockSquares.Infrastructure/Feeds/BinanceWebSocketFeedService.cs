@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using StockSquares.Application.Abstractions;
+using StockSquares.Application.Interfaces;
 using StockSquares.Domain.Models;
 
 namespace StockSquares.Infrastructure.Feeds;
@@ -14,7 +14,7 @@ public class BinanceWebSocketFeedService : BackgroundService, IPriceFeedService
     private readonly ILogger<BinanceWebSocketFeedService> _logger;
     private readonly string[] _symbols = { "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT" };
     
-    private const string BinanceWsUrl = "wss://stream.binance.com:943/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker/bnbusdt@ticker/adausdt@ticker/dogeusdt@ticker";
+    private const string BinanceWsUrl = "wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker/bnbusdt@ticker/adausdt@ticker/dogeusdt@ticker";
 
     public event Func<PriceTick, Task>? OnPriceTickAsync;
 
@@ -46,7 +46,7 @@ public class BinanceWebSocketFeedService : BackgroundService, IPriceFeedService
             {
                 using var ws = new ClientWebSocket();
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                cts.CancelAfter(TimeSpan.FromSeconds(10)); // Timeout for connection attempt
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
 
                 _logger.LogInformation("Attempting connection to Binance WebSocket feed: {Url}", BinanceWsUrl);
                 await ws.ConnectAsync(new Uri(BinanceWsUrl), cts.Token);
@@ -86,10 +86,16 @@ public class BinanceWebSocketFeedService : BackgroundService, IPriceFeedService
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("data", out var data)) return;
+            if (!root.TryGetProperty("data", out var data))
+            {
+                return;
+            }
 
             string symbol = data.GetProperty("s").GetString()?.ToUpperInvariant() ?? string.Empty;
-            if (string.IsNullOrEmpty(symbol)) return;
+            if (string.IsNullOrEmpty(symbol))
+            {
+                return;
+            }
 
             if (decimal.TryParse(data.GetProperty("c").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var price))
             {

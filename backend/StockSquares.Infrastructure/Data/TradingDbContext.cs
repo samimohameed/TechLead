@@ -22,7 +22,6 @@ public class TradingDbContext : DbContext
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(TradingDbContext).Assembly);
 
-        // Global soft-delete filters matching Blocks architecture
         modelBuilder.Entity<Portfolio>().HasQueryFilter(p => !p.IsDeleted);
         modelBuilder.Entity<Position>().HasQueryFilter(p => !p.IsDeleted);
         modelBuilder.Entity<Order>().HasQueryFilter(o => !o.IsDeleted);
@@ -62,6 +61,10 @@ public class TradingDbContext : DbContext
             switch (entry.State)
             {
                 case EntityState.Added:
+                    if (entry.Entity.Id == Guid.Empty)
+                    {
+                        entry.Entity.Id = Guid.NewGuid();
+                    }
                     if (entry.Entity.CreatedAt == default)
                     {
                         entry.Entity.CreatedAt = currentTime;

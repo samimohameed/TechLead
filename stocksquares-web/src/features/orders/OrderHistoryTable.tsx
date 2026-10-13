@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { OrderDto } from '../../shared/api/types';
+import { OrderDto } from '../../shared/dtos';
 import { useTranslation } from '../../shared/i18n/I18nContext';
 import { OrderStatusBadge, OrderSideBadge } from '../../shared/components/StatusBadge';
-import { Clock, XCircle } from 'lucide-react';
+import { formatDateTime } from '../../shared/utils/date.util';
+import { Clock, XCircle, Loader2 } from 'lucide-react';
 
 interface OrderHistoryTableProps {
   orders: OrderDto[];
@@ -37,9 +38,12 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Clock size={18} style={{ color: 'var(--color-brand)' }} />
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
             {t.orderHistory}
           </h2>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            ({filteredOrders.length})
+          </span>
         </div>
 
         {/* Filter buttons */}
@@ -49,7 +53,7 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
               key={f}
               onClick={() => setFilter(f)}
               style={{
-                padding: '4px 10px',
+                padding: '4px 12px',
                 borderRadius: 'var(--radius-sm)',
                 border: '1px solid',
                 borderColor: filter === f ? 'var(--color-brand)' : 'var(--border-color)',
@@ -57,10 +61,11 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
                 color: filter === f ? '#fff' : 'var(--text-secondary)',
                 fontSize: '0.75rem',
                 fontWeight: 600,
-                cursor: 'pointer'
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
               }}
             >
-              {f}
+              {f === 'ALL' ? t.orderFilterAll : f === 'PENDING' ? t.orderFilterPending : t.orderFilterFilled}
             </button>
           ))}
         </div>
@@ -84,7 +89,7 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
           <tbody>
             {filteredOrders.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                <td colSpan={9} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
                   {t.noOrders}
                 </td>
               </tr>
@@ -96,10 +101,10 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
                 return (
                   <tr key={order.id}>
                     <td className="font-mono text-muted" style={{ fontSize: '0.75rem' }}>
-                      {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {formatDateTime(order.createdAt)}
                     </td>
 
-                    <td className="font-mono" style={{ fontWeight: 600 }}>
+                    <td className="font-mono" style={{ fontWeight: 700 }}>
                       {order.symbol}
                     </td>
 
@@ -111,7 +116,7 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
                       {order.type === 1 ? t.marketOrder : t.limitOrder}
                     </td>
 
-                    <td className="font-mono">
+                    <td className="font-mono" style={{ fontWeight: 600 }}>
                       {order.quantity}
                     </td>
 
@@ -131,8 +136,8 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
                       {isPending ? (
                         <button
                           className="btn btn-ghost"
-                          onClick={() => onCancelOrder(order.id)}
                           disabled={isCancelling}
+                          onClick={() => onCancelOrder(order.id)}
                           style={{
                             padding: '4px 8px',
                             fontSize: '0.75rem',
@@ -140,11 +145,17 @@ export const OrderHistoryTable: React.FC<OrderHistoryTableProps> = ({
                             borderColor: 'rgba(244, 63, 94, 0.3)'
                           }}
                         >
-                          <XCircle size={13} />
-                          <span>{isCancelling ? t.cancelling : t.cancel}</span>
+                          {isCancelling ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <XCircle size={13} />
+                          )}
+                          <span style={{ marginLeft: '4px' }}>
+                            {isCancelling ? t.cancelling : t.cancel}
+                          </span>
                         </button>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>—</span>
+                        <span className="text-muted" style={{ fontSize: '0.75rem' }}>—</span>
                       )}
                     </td>
                   </tr>

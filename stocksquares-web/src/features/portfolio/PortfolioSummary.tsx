@@ -1,5 +1,5 @@
 import React from 'react';
-import { PortfolioDto } from '../../shared/api/types';
+import { PortfolioDto } from '../../shared/dtos';
 import { useTranslation } from '../../shared/i18n/I18nContext';
 import { MetricCard } from '../../shared/components/MetricCard';
 import { Wallet, DollarSign, TrendingUp, TrendingDown, Lock, PieChart } from 'lucide-react';
@@ -18,9 +18,9 @@ export const PortfolioSummary: React.FC<PortfolioSummaryProps> = ({ portfolio })
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: '16px',
-      marginBottom: '20px'
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: '12px',
+      marginBottom: '14px'
     }}>
       {/* Total Equity */}
       <MetricCard
@@ -35,7 +35,7 @@ export const PortfolioSummary: React.FC<PortfolioSummaryProps> = ({ portfolio })
       <MetricCard
         label={t.availableCash}
         value={`$${portfolio.availableCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-        subValue={portfolio.reservedCash > 0 ? `$${portfolio.reservedCash.toFixed(2)} locked` : undefined}
+        subValue={portfolio.reservedCash > 0 ? `$${portfolio.reservedCash.toFixed(2)} ${t.locked}` : undefined}
         trend="neutral"
         icon={<Wallet size={18} />}
       />

@@ -16,9 +16,9 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   icon
 }) => {
   return (
-    <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+    <div className="glass-panel" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
           {label}
         </span>
         {icon && (
@@ -28,8 +28,8 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-        <span className="font-mono" style={{ fontSize: '1.625rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+        <span className="font-mono" style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
           {value}
         </span>
         {subValue && (
