@@ -1,0 +1,30 @@
+# Stage 1: Build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy project files for caching restore layer
+COPY backend/StockSquares.Domain/StockSquares.Domain.csproj StockSquares.Domain/
+COPY backend/StockSquares.Application/StockSquares.Application.csproj StockSquares.Application/
+COPY backend/StockSquares.Infrastructure/StockSquares.Infrastructure.csproj StockSquares.Infrastructure/
+COPY backend/StockSquares.Api/StockSquares.Api.csproj StockSquares.Api/
+COPY backend/StockSquares.Tests/StockSquares.Tests.csproj StockSquares.Tests/
+COPY backend/StockSquares.slnx ./
+
+RUN dotnet restore StockSquares.slnx
+
+# Copy source code and build
+COPY backend/ ./
+RUN dotnet publish StockSquares.Api/StockSquares.Api.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+# Stage 2: Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+WORKDIR /app
+
+ENV ASPNETCORE_HTTP_PORTS=5000
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+EXPOSE 5000
+
+COPY --from=build /app/publish .
+
+ENTRYPOINT ["dotnet", "StockSquares.Api.dll"]

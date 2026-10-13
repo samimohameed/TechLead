@@ -1,0 +1,65 @@
+name: Azure Deployment Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    name: Build & Deploy Backend (Azure Container Apps)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Log in to Azure Container Registry
+      uses: azure/docker-login@v1
+      if: env.ACR_LOGIN_SERVER != ''
+      with:
+        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+      env:
+        ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+
+    - name: Build and Push Backend Image
+      if: env.ACR_LOGIN_SERVER != ''
+      run: |
+        docker build -f Dockerfile.backend -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }} .
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }}
+      env:
+        ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+
+    - name: Deploy to Azure Container App
+      uses: azure/container-apps-deploy-action@v1
+      if: env.AZURE_CONTAINER_APP_NAME != ''
+      with:
+        containerAppName: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
+        resourceGroup: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        imageToDeploy: ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }}
+      env:
+        AZURE_CONTAINER_APP_NAME: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
+
+  deploy-frontend:
+    name: Deploy Frontend (Azure Static Web Apps)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Deploy to Azure Static Web Apps
+      uses: Azure/static-web-apps-deploy@v1
+      if: env.AZURE_STATIC_WEB_APPS_API_TOKEN != ''
+      with:
+        azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        action: "upload"
+        app_location: "stocksquares-web"
+        output_location: "dist"
+      env:
+        AZURE_STATIC_WEB_APPS_API_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}

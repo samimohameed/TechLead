@@ -1,0 +1,53 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-ci:
+    name: Build & Test Backend (.NET 10)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 10 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore Backend Dependencies
+      run: dotnet restore backend/StockSquares.slnx
+
+    - name: Build Backend Solution
+      run: dotnet build backend/StockSquares.slnx --no-restore --configuration Release
+
+    - name: Run Test Suite
+      run: dotnet test backend/StockSquares.slnx --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
+
+  frontend-ci:
+    name: Build & Verify Frontend (React + TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: 'stocksquares-web/package-lock.json'
+
+    - name: Install Frontend Dependencies
+      working-directory: stocksquares-web
+      run: npm ci
+
+    - name: Build Frontend Application
+      working-directory: stocksquares-web
+      run: npm run build
