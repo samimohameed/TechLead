@@ -1,10 +1,10 @@
+using StockSquares.Domain.Common;
 using StockSquares.Domain.Exceptions;
 
 namespace StockSquares.Domain.Entities;
 
-public class Position
+public class Position : BaseEntity
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
     public Guid PortfolioId { get; set; }
     public string Symbol { get; set; } = string.Empty;
     public decimal Quantity { get; set; }
@@ -12,7 +12,6 @@ public class Position
     public decimal AverageEntryPrice { get; set; }
     public decimal CurrentPrice { get; set; }
     public decimal RealizedPnL { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public decimal AvailableQuantity => Math.Max(0m, Quantity - ReservedQuantity);
     public decimal UnrealizedPnL => Quantity > 0 ? Math.Round((CurrentPrice - AverageEntryPrice) * Quantity, 4) : 0m;

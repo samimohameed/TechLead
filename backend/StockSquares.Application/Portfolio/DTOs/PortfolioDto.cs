@@ -32,7 +32,7 @@ public record PositionDto(
         p.CostBasis,
         p.UnrealizedPnL,
         p.RealizedPnL,
-        p.UpdatedAt
+        p.UpdatedAt ?? p.CreatedAt
     );
 }
 

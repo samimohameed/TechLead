@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using StockSquares.Application.Common;
+using StockSquares.Domain.Enums;
 using StockSquares.Domain.Exceptions;
 
 namespace StockSquares.Api.Middlewares;
@@ -39,14 +40,32 @@ public class ExceptionHandlingMiddleware
         _logger.LogError(ex, "Request failed: {Path} {Method}", context.Request.Path, context.Request.Method);
 
         var statusCode = HttpStatusCode.InternalServerError;
-        var errorCode = "INTERNAL_SERVER_ERROR";
+        var errorCode = ErrorCode.InternalServerError;
         var message = "An unexpected error occurred.";
 
-        if (ex is DomainException domainEx)
+        if (ex is InsufficientFundsException fundsEx)
         {
             statusCode = HttpStatusCode.BadRequest;
-            errorCode = domainEx.ErrorCode;
+            errorCode = ErrorCode.InsufficientFunds;
+            message = fundsEx.Message;
+        }
+        else if (ex is InsufficientPositionException posEx)
+        {
+            statusCode = HttpStatusCode.BadRequest;
+            errorCode = ErrorCode.InsufficientPosition;
+            message = posEx.Message;
+        }
+        else if (ex is DomainException domainEx)
+        {
+            statusCode = HttpStatusCode.BadRequest;
+            errorCode = ErrorCode.ValidationError;
             message = domainEx.Message;
+        }
+        else if (ex is UnauthorizedAccessException authEx)
+        {
+            statusCode = HttpStatusCode.Unauthorized;
+            errorCode = ErrorCode.Unauthorized;
+            message = authEx.Message;
         }
 
         context.Response.StatusCode = (int)statusCode;

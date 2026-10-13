@@ -35,7 +35,7 @@ public class MarketsController : ControllerBase
         var market = _marketService.GetMarket(symbol);
         if (market == null)
         {
-            return NotFound(Result<MarketDto>.Failure($"Market for symbol '{symbol}' was not found.", "MARKET_NOT_FOUND"));
+            return NotFound(Result<MarketDto>.Failure($"Market for symbol '{symbol}' was not found.", ErrorCode.NotFound));
         }
 
         return Ok(Result<MarketDto>.Success(market));

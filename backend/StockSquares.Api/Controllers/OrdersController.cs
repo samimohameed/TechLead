@@ -52,7 +52,7 @@ public class OrdersController : ControllerBase
         var order = await _orderService.GetOrderByIdAsync(id, cancellationToken);
         if (order == null)
         {
-            return NotFound(Result<OrderDto>.Failure($"Order '{id}' not found.", "ORDER_NOT_FOUND"));
+            return NotFound(Result<OrderDto>.Failure($"Order '{id}' not found.", StockSquares.Domain.Enums.ErrorCode.NotFound));
         }
 
         return Ok(Result<OrderDto>.Success(order));

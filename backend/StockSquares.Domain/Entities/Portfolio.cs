@@ -1,16 +1,14 @@
+using StockSquares.Domain.Common;
 using StockSquares.Domain.Exceptions;
 
 namespace StockSquares.Domain.Entities;
 
-public class Portfolio
+public class Portfolio : BaseEntity
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
     public string UserId { get; set; } = "trader-1";
     public decimal CashBalance { get; set; } = 50000.00m;
     public decimal ReservedCash { get; set; } = 0.00m;
     public decimal InitialBalance { get; set; } = 50000.00m;
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public List<Position> Positions { get; set; } = new();
 

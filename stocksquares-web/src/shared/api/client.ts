@@ -22,16 +22,26 @@ class ApiClient {
       headers
     });
 
-    const json = (await response.json()) as Result<T>;
+    let json: Result<T> | null = null;
+    const text = await response.text();
+    if (text) {
+      try {
+        json = JSON.parse(text) as Result<T>;
+      } catch {
+        // Response was not JSON
+      }
+    }
 
-    if (!response.ok || !json.isSuccess) {
-      const err = new Error(json.message || `Request failed with status ${response.status}`);
-      (err as any).errorCode = json.errorCode;
-      (err as any).errors = json.errors;
+    if (!response.ok || !json || !json.isSuccess) {
+      const message = json?.message || (response.status === 404 ? 'Resource not found' : `Request failed with status ${response.status}`);
+      const err = new Error(message);
+      (err as any).status = response.status;
+      (err as any).errorCode = json?.errorCode;
+      (err as any).errors = json?.errors;
       throw err;
     }
 
-    return json.data;
+    return json.data as T;
   }
 
   public async getMarkets(): Promise<MarketDto[]> {

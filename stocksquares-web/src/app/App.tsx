@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api, SIGNALR_URL } from '../shared/api/client';
+import { api } from '../shared/api/client';
 import { MarketDto, PortfolioDto, OrderDto, PlaceOrderRequest } from '../shared/api/types';
 import { SignalRClient } from '../shared/realtime/signalrClient';
 import { PriceUpdated, OrderUpdated, PortfolioUpdated, ConnectionState } from '../shared/realtime/types';
 import { useTranslation } from '../shared/i18n/I18nContext';
+import { useToast } from '../shared/components/Toast';
+import { extractErrorMessage } from '../shared/utils/error.util';
+import { environment } from '../environments/environment';
 import { Navbar } from '../shared/components/Navbar';
 import { PortfolioSummary } from '../features/portfolio/PortfolioSummary';
 import { LivePriceTable } from '../features/markets/LivePriceTable';
+import { PriceChart } from '../features/markets/PriceChart';
 import { OrderTicket } from '../features/orders/OrderTicket';
 import { PositionsTable } from '../features/portfolio/PositionsTable';
 import { OrderHistoryTable } from '../features/orders/OrderHistoryTable';
+import { RecentTradesTable } from '../features/portfolio/RecentTradesTable';
 
 const defaultPortfolio: PortfolioDto = {
   id: '',
@@ -27,19 +32,21 @@ const defaultPortfolio: PortfolioDto = {
 
 export const App: React.FC = () => {
   const { t } = useTranslation();
+  const { showSuccess, showError, showInfo } = useToast();
 
   // State
   const [markets, setMarkets] = useState<Record<string, MarketDto>>({});
   const [tickFlashes, setTickFlashes] = useState<Record<string, 'up' | 'down'>>({});
+  const [priceHistory, setPriceHistory] = useState<Record<string, number[]>>({});
   const [portfolio, setPortfolio] = useState<PortfolioDto>(defaultPortfolio);
   const [orders, setOrders] = useState<OrderDto[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTCUSDT');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(environment.defaultSymbol);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('Disconnected');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState<boolean>(false);
-  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'trades'>('positions');
 
   const signalRRef = useRef<SignalRClient | null>(null);
 
@@ -53,9 +60,15 @@ export const App: React.FC = () => {
       ]);
 
       const marketMap: Record<string, MarketDto> = {};
-      marketsData.forEach(m => { marketMap[m.symbol] = m; });
+      const historyMap: Record<string, number[]> = {};
+
+      marketsData.forEach(m => {
+        marketMap[m.symbol] = m;
+        historyMap[m.symbol] = [m.price];
+      });
 
       setMarkets(marketMap);
+      setPriceHistory(historyMap);
       setPortfolio(portfolioData);
       setOrders(ordersData);
 
@@ -64,7 +77,8 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Failed to load initial data snapshot:', err);
-      setGlobalError(err.message || 'Failed to connect to API backend');
+      const { message } = extractErrorMessage(err);
+      showError('Connection Error', message);
     }
   };
 
@@ -72,15 +86,21 @@ export const App: React.FC = () => {
     fetchInitialSnapshots();
 
     // Setup SignalR
-    const client = new SignalRClient(SIGNALR_URL);
+    const client = new SignalRClient(environment.signalRHubUrl);
     signalRRef.current = client;
 
     client.setCallbacks(
-      (state) => setConnectionState(state),
+      (state) => {
+        setConnectionState(state);
+        if (state === 'Connected') {
+          showInfo('Live Feed Connected', 'Receiving real-time prices and order events.');
+        }
+      },
       () => {
-        // After reconnecting, refresh snapshots
+        // After reconnecting, refresh snapshots as required
         console.log('SignalR reconnected, refreshing snapshots...');
         fetchInitialSnapshots();
+        showInfo('Reconnected', 'Synchronized latest market and portfolio snapshots.');
       }
     );
 
@@ -116,9 +136,16 @@ export const App: React.FC = () => {
           };
         });
 
+        // Append to sparkline price history
+        setPriceHistory(prev => {
+          const current = prev[event.symbol] || [];
+          const updated = [...current, event.price].slice(-40); // keep last 40 ticks
+          return { ...prev, [event.symbol]: updated };
+        });
+
         // Mark open positions with updated price & unrealized P&L
         setPortfolio(prev => {
-          let updatedPositions = prev.positions.map(pos => {
+          const updatedPositions = prev.positions.map(pos => {
             if (pos.symbol.toUpperCase() === event.symbol.toUpperCase() && pos.quantity > 0) {
               const currentPrice = event.price;
               const marketValue = pos.quantity * currentPrice;
@@ -151,9 +178,13 @@ export const App: React.FC = () => {
 
       // On OrderUpdated
       (event: OrderUpdated) => {
-        // Refresh orders & portfolio to get consistent server-calculated state
+        // Refresh orders & portfolio
         api.getOrders().then(setOrders).catch(console.error);
         api.getPortfolio().then(setPortfolio).catch(console.error);
+
+        if (event.status === 'Filled') {
+          showSuccess('Order Filled!', `Order ${event.orderId.substring(0, 8)} has executed against the market.`);
+        }
       },
 
       // On PortfolioUpdated
@@ -177,15 +208,20 @@ export const App: React.FC = () => {
   // Handlers
   const handlePlaceOrder = async (req: PlaceOrderRequest) => {
     setIsSubmittingOrder(true);
-    setGlobalError(null);
     try {
-      await api.placeOrder(req);
-      // Refresh state
+      const order = await api.placeOrder(req);
       const [p, o] = await Promise.all([api.getPortfolio(), api.getOrders()]);
       setPortfolio(p);
       setOrders(o);
+
+      if (order.status === 2) { // Filled
+        showSuccess(t.orderPlacedSuccess, `${req.side === 1 ? 'Bought' : 'Sold'} ${req.quantity} ${req.symbol} @ $${order.filledPrice}`);
+      } else {
+        showInfo('Limit Order Queued', `Limit order submitted at $${req.limitPrice}. Waiting for market price to reach limit.`);
+      }
     } catch (err: any) {
-      setGlobalError(err.message || 'Order failed');
+      const { message } = extractErrorMessage(err);
+      showError('Order Failed', message);
       throw err;
     } finally {
       setIsSubmittingOrder(false);
@@ -194,14 +230,15 @@ export const App: React.FC = () => {
 
   const handleCancelOrder = async (orderId: string) => {
     setCancellingOrderId(orderId);
-    setGlobalError(null);
     try {
       await api.cancelOrder(orderId);
       const [p, o] = await Promise.all([api.getPortfolio(), api.getOrders()]);
       setPortfolio(p);
       setOrders(o);
+      showSuccess(t.orderCancelledSuccess, 'Reserved balance refunded.');
     } catch (err: any) {
-      setGlobalError(err.message || 'Cancellation failed');
+      const { message } = extractErrorMessage(err);
+      showError('Cancellation Failed', message);
     } finally {
       setCancellingOrderId(null);
     }
@@ -215,12 +252,16 @@ export const App: React.FC = () => {
       const o = await api.getOrders();
       setPortfolio(p);
       setOrders(o);
+      showSuccess('Portfolio Reset', 'Virtual balance restored to $50,000.00 cash.');
     } catch (err: any) {
-      setGlobalError(err.message || 'Reset failed');
+      const { message } = extractErrorMessage(err);
+      showError('Reset Failed', message);
     } finally {
       setIsResetting(false);
     }
   };
+
+  const currentHistory = priceHistory[selectedSymbol] || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', gap: '20px' }}>
@@ -231,29 +272,6 @@ export const App: React.FC = () => {
       />
 
       <main style={{ padding: '0 24px 40px 24px', maxWidth: '1440px', width: '100%', margin: '0 auto' }}>
-        {/* Global Error Banner */}
-        {globalError && (
-          <div style={{
-            background: 'var(--color-down-bg)',
-            border: '1px solid rgba(244, 63, 94, 0.4)',
-            color: 'var(--color-down)',
-            padding: '12px 16px',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: '20px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <span>{globalError}</span>
-            <button
-              onClick={() => setGlobalError(null)}
-              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
         {/* Portfolio Summary Metrics */}
         <PortfolioSummary portfolio={portfolio} />
 
@@ -265,7 +283,15 @@ export const App: React.FC = () => {
           alignItems: 'start'
         }}>
           {/* Main Content Area */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Live Chart for selected symbol */}
+            <PriceChart
+              symbol={selectedSymbol}
+              market={markets[selectedSymbol]}
+              priceHistory={currentHistory}
+            />
+
+            {/* Markets Table */}
             <LivePriceTable
               markets={markets}
               tickFlashes={tickFlashes}
@@ -273,16 +299,52 @@ export const App: React.FC = () => {
               onSelectSymbol={setSelectedSymbol}
             />
 
-            <PositionsTable
-              positions={portfolio.positions}
-              onSelectSymbol={setSelectedSymbol}
-            />
+            {/* Tabs for Positions, Orders, and Executions */}
+            <div className="glass-panel" style={{ padding: '8px', display: 'flex', gap: '8px', width: 'fit-content' }}>
+              <button
+                className={`btn ${activeTab === 'positions' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setActiveTab('positions')}
+                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
+              >
+                {t.positions} ({portfolio.positions.filter(p => p.quantity > 0).length})
+              </button>
+              <button
+                className={`btn ${activeTab === 'orders' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setActiveTab('orders')}
+                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
+              >
+                {t.orderHistory} ({orders.length})
+              </button>
+              <button
+                className={`btn ${activeTab === 'trades' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setActiveTab('trades')}
+                style={{ padding: '6px 14px', fontSize: '0.8125rem' }}
+              >
+                Recent Executions ({portfolio.recentTrades?.length || 0})
+              </button>
+            </div>
 
-            <OrderHistoryTable
-              orders={orders}
-              onCancelOrder={handleCancelOrder}
-              cancellingOrderId={cancellingOrderId}
-            />
+            {/* Tab content view */}
+            {activeTab === 'positions' && (
+              <PositionsTable
+                positions={portfolio.positions}
+                onSelectSymbol={setSelectedSymbol}
+              />
+            )}
+
+            {activeTab === 'orders' && (
+              <OrderHistoryTable
+                orders={orders}
+                onCancelOrder={handleCancelOrder}
+                cancellingOrderId={cancellingOrderId}
+              />
+            )}
+
+            {activeTab === 'trades' && (
+              <RecentTradesTable
+                trades={portfolio.recentTrades || []}
+              />
+            )}
           </div>
 
           {/* Sticky Order Ticket */}

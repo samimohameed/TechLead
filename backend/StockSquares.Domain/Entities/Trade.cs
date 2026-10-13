@@ -1,10 +1,10 @@
+using StockSquares.Domain.Common;
 using StockSquares.Domain.Enums;
 
 namespace StockSquares.Domain.Entities;
 
-public class Trade
+public class Trade : BaseEntity
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrderId { get; set; }
     public Guid PortfolioId { get; set; }
     public string Symbol { get; set; } = string.Empty;

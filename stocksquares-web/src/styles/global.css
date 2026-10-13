@@ -247,3 +247,20 @@ body::before {
 [dir="rtl"] .data-table {
   text-align: right;
 }
+
+/* Remove number input arrows globally matching Blocks standard */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+/* Enforce no text wrapping in table cells matching Blocks standard */
+table td, table th {
+  white-space: nowrap;
+}

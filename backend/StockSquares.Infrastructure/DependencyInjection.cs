@@ -23,6 +23,8 @@ public static class DependencyInjection
         });
 
         services.AddScoped<DbContext>(provider => provider.GetRequiredService<TradingDbContext>());
+        services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<ITradingRepository, TradingRepository>();
         services.AddScoped<IIdempotencyStore, IdempotencyStore>();
 

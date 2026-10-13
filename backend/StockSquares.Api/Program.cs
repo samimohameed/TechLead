@@ -1,4 +1,5 @@
 using StockSquares.Api.Extensions;
+using StockSquares.Api.Filters;
 using StockSquares.Api.Middlewares;
 using StockSquares.Application;
 using StockSquares.Application.Abstractions;
@@ -7,7 +8,12 @@ using StockSquares.Infrastructure;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Dependency Injection Layers
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Automatic FluentValidation action filter matching Blocks-BackEnd
+    options.Filters.Add<ValidationActionFilter>();
+});
+
 builder.Services.AddCustomCors(builder.Configuration);
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddSignalRServices();
@@ -18,15 +24,14 @@ builder.Services.AddApplication();
 var app = builder.Build();
 
 // 2. Middleware Pipeline
-app.UseMiddleware<ExceptionHandlingMiddleware>();
-
 if (app.Environment.IsDevelopment())
 {
     app.UseSwaggerDocumentation();
 }
 
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseCustomCors();
-
+app.UseMiddleware<TransactionMiddleware>();
 app.UseAuthorization();
 
 // 3. Endpoint Mappings

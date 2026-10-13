@@ -1,11 +1,11 @@
+using StockSquares.Domain.Common;
 using StockSquares.Domain.Enums;
 using StockSquares.Domain.Exceptions;
 
 namespace StockSquares.Domain.Entities;
 
-public class Order
+public class Order : BaseEntity
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
     public Guid PortfolioId { get; set; }
     public string? ClientOrderId { get; set; }
     public string Symbol { get; set; } = string.Empty;
@@ -19,7 +19,6 @@ public class Order
     public decimal FilledQuantity { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
     public string? RejectReason { get; set; }
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? FilledAt { get; set; }
 
     public Order() { }
