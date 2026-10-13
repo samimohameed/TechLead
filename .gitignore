@@ -9,6 +9,7 @@ obj/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.zip
 
 # Node
 node_modules/
