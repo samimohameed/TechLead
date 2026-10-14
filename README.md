@@ -443,6 +443,26 @@ graph TD
 
 ---
 
+### What We Would Implement With More Time
+
+Given additional engineering runway beyond the initial 6-hour assessment scope, the following enterprise capabilities would be prioritized:
+
+1. **Advanced Order Types & Time-in-Force**:
+   * Stop-Loss & Take-Profit bracket orders that automatically attach to executed positions.
+   * Time-In-Force (TIF) policies: Good-Til-Cancelled (GTC), Immediate-or-Cancel (IOC), and Fill-or-Kill (FOK).
+2. **Partial Fills & Realistic Liquidity Slippage**:
+   * Simulate realistic market depth where large market orders experience volume-weighted average price (VWAP) slippage as they consume order book liquidity.
+3. **Live Level 2 Order Book (Depth of Market) Visualization**:
+   * Real-time bid/ask order book ladder showing cumulative volume depth curves with sub-second WebSocket updates.
+4. **Multi-Tenancy & Secure Authentication**:
+   * ASP.NET Core Identity with JWT bearer tokens, refresh token rotation, and multi-tenant portfolio segregation.
+5. **Historical Portfolio Analytics & Risk Metrics**:
+   * Interactive historical equity growth curves, Sharpe ratio, maximum drawdown calculations, and win-rate distribution charts.
+6. **End-to-End Browser Testing**:
+   * Playwright E2E test suite validating real-time tick streaming, order ticket execution, and dynamic RTL/LTR language toggling across Chrome, Firefox, and WebKit.
+
+---
+
 ## 7. Azure Deployment & DevOps Guide
 
 ### Deployment Architecture & Assessment Alignment
