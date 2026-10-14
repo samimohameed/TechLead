@@ -79,6 +79,7 @@ graph TD
 * **Limit Buy Orders**: Reserves required cash (`Quantity * LimitPrice`) at order entry. If execution occurs at a lower market tick price (price improvement), the excess reserved cash is credited back to the available cash balance.
 * **Limit Sell Orders**: Reserves available position quantity at entry so the trader cannot sell the same assets twice.
 * **Market Orders**: Instantly verified against available balance/holdings and executed at the current market tick price.
+* **Single-Instance In-Memory Concurrency Assumption**: Concurrency protection within the application is serialized using an asynchronous `SemaphoreSlim` coordinator lock inside the single running API process. In a horizontally scaled multi-replica environment, database-level concurrency controls (such as EF Core `[Timestamp]` row-version tokens, SQL Server `SERIALIZABLE` / `UPDLOCK` transaction isolation, or distributed Redis Redlock) and retry handling are required to prevent separate container processes from reading the same balance and overspending.
 
 ### 3. Database Transaction Boundaries
 * Order status updates, trade records, balance changes, and position adjustments are committed **together in an atomic SQL Server transaction**.
@@ -90,6 +91,11 @@ graph TD
 * **Transaction Coordination**: Idempotency checks and response persistence occur within the serialized coordinator lock and database transaction, eliminating race conditions where simultaneous requests with the same key could otherwise bypass initial checks.
 * **Mismatched Payload Rejection**: Reusing an existing idempotency key with different order parameters is detected via hash comparison and rejected with `IDEMPOTENCY_CONFLICT` (HTTP 409 Conflict).
 * **Identical Retry Safe Resolution**: Retrying an identical request returns the original cached `OrderDto` response without duplicate debiting or phantom executions.
+
+### 5. Single-User Assessment Demo Assumption
+* For the practical scope of this evaluation, the API operates as an **explicit single-user assessment demonstration environment** using a default profile (`DefaultUserId = "trader-1"`).
+* All incoming requests view and execute against this pre-seeded virtual portfolio ($50,000.00 initial balance).
+* In a multi-tenant production system, user and portfolio identity is derived dynamically from authenticated JWT or OAuth2 identity claims (`HttpContext.User`), isolating accounts across distinct traders.
 
 ---
 
@@ -440,36 +446,58 @@ graph TD
 
 ### 3. Real-Time Broadcast at Scale
 * Replace in-process SignalR with **Azure SignalR Service** in Serverless / Backplane mode.
-* Client WebSocket connections terminate at the edge; backend nodes publish to Redis Pub/Sub, scaling horizontally to 1,000,000+ concurrent subscriber sockets without backend connection exhaustion.
-
-### 4. Distributed Idempotency via Redis
-* Replace relational idempotency storage with Redis `SET key value NX EX 86400` (atomic check-and-set with TTL), reducing idempotency check latency to < 1 ms.
+* Client WebSocket connections terminate at the edge; backend nodes publish to Redis Pub/Sub, scaling horizontally to 1,000,000+ concurrent traders.
 
 ---
 
-### What We Would Implement With More Time
+## 7. What We Would Implement With More Time
 
-Given additional engineering runway beyond the initial 6-hour assessment scope, the following enterprise capabilities would be prioritized:
+Given additional engineering runway beyond the initial 6-hour assessment scope, the following enterprise capabilities and architectural upgrades would be prioritized:
 
-1. **Exchange-Style Double-Auction Order Book**:
-   * Expand from market-tick paper trading to an internal L2/L3 order book matcher with price-time priority matching between internal market makers and retail participants.
-2. **Advanced Order Types & Time-in-Force**:
-   * Stop-Loss & Take-Profit bracket orders that automatically attach to executed positions.
-   * Time-In-Force (TIF) policies: Good-Til-Cancelled (GTC), Immediate-or-Cancel (IOC), and Fill-or-Kill (FOK).
-3. **Partial Fills & Realistic Liquidity Slippage**:
-   * Simulate realistic market depth where large market orders experience volume-weighted average price (VWAP) slippage as they consume order book liquidity.
-4. **Live Level 2 Order Book (Depth of Market) Visualization**:
-   * Real-time bid/ask order book ladder showing cumulative volume depth curves with sub-second WebSocket updates.
-5. **Multi-Tenancy & Secure Authentication**:
-   * ASP.NET Core Identity with JWT bearer tokens, refresh token rotation, and multi-tenant portfolio segregation.
-6. **Historical Portfolio Analytics & Risk Metrics**:
-   * Interactive historical equity growth curves, Sharpe ratio, maximum drawdown calculations, and win-rate distribution charts.
-7. **End-to-End Browser Testing**:
-   * Playwright E2E test suite validating real-time tick streaming, order ticket execution, and dynamic RTL/LTR language toggling across Chrome, Firefox, and WebKit.
+### 1. High — Concurrency Protection Only Works Inside One Process (`TradingEngine.cs`)
+* **Review Finding / Assessment Limitation**: The static `SemaphoreSlim` serializes trading operations within *this single running application process*. It does not coordinate multiple API replicas or external writers to the database. SQL transactions alone do not automatically prevent two separate processes from reading the same balance and overspending before either commits.
+* **Fix Applied for Assessment**: Clearly documented the single-instance coordinator assumption across code and documentation.
+* **Production Multi-Instance Blueprint**:
+  * **Database-Level Concurrency Protection**:
+    * Add EF Core optimistic concurrency tokens (`[Timestamp] public byte[] RowVersion { get; set; }` mapped to SQL Server `ROWVERSION`) on `Portfolio` and `Position` entities.
+    * Enforce pessimistic row-level locking (`SELECT ... WITH (UPDLOCK, HOLDLOCK)`) or elevated transaction isolation (`REPEATABLE READ` / `SERIALIZABLE`) during balance checking and reservation.
+  * **Conflict Retry Policy**: Implement automated retry handling using Polly to intercept `DbUpdateConcurrencyException`, reload fresh state, and safely re-evaluate the order with exponential backoff and jitter.
+  * **Distributed Locking**: Deploy a distributed lock coordinator using Redis (Redlock pattern) partitioned by `traderId` or ticker symbol (`BTCUSDT`), ensuring only one worker instance processes a given portfolio at any instant.
+
+### 2. High — The API Uses a Hardcoded Trader Identity (`OrderService.cs` · `PortfolioService.cs`)
+* **Review Finding / Assessment Limitation**: Both services currently use `DefaultUserId = "trader-1"`. This is acceptable for a clearly labelled single-user demo, but it isn't multi-user portfolio isolation. Anyone reaching the API operates on the same default portfolio, and order access isn't backed by authenticated user identity.
+* **Fix Applied for Assessment**: Explicitly labeled and documented this as a single-user assessment demonstration environment in XML docstrings, controller comments, Swagger docs, and Section 2 of this README.
+* **Production Multi-Tenant Blueprint**:
+  * **Authentication**: Integrate ASP.NET Core Identity with JWT Bearer authentication, OAuth2, and OpenID Connect (OIDC).
+  * **Claims-Derived Identity**: Derive the active user and portfolio identity dynamically from authenticated user claims (`HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)`) in `OrdersController` and `PortfolioController`.
+  * **Tenant Authorization**: Enforce resource-based authorization policies ensuring traders can only query, place, or cancel orders belonging to their own portfolio, preventing cross-tenant leakage.
+
+### 3. High — Ticker-Triggered Simulator vs. Full Order-Book Matcher (`MatchingEngine.cs` · `TradingEngine.cs`)
+* **Review Finding / Assessment Limitation**: Limit orders are evaluated against the latest market tick: buys fill when the tick is at or below the limit; sells fill when it is at or above the limit. The execution price is that tick price. There is no bid/ask order book or matching against other submitted orders.
+* **Fix Applied for Assessment**: Clearly framed and documented the engine as a market-tick-driven paper trading simulator (where retail traders execute against live Binance market ticks) rather than an exchange-style double auction.
+* **Production Full-Exchange Blueprint**:
+  * Implement an internal Level 2/3 bid/ask order book with price-time priority matching.
+  * Match buy and sell orders directly between participants, maintaining market depth and liquidity spread.
+
+### 4. Advanced Order Types & Time-in-Force (TIF)
+* Stop-Loss & Take-Profit bracket orders that automatically attach to executed positions.
+* Time-In-Force policies: Good-Til-Cancelled (GTC), Immediate-or-Cancel (IOC), and Fill-or-Kill (FOK).
+
+### 5. Partial Fills & Realistic Liquidity Slippage
+* Simulate realistic market depth where large market orders experience volume-weighted average price (VWAP) slippage as they consume order book liquidity.
+
+### 6. Live Level 2 Order Book (Depth of Market) Visualization
+* Real-time bid/ask order book ladder showing cumulative volume depth curves with sub-second WebSocket updates.
+
+### 7. Historical Portfolio Analytics & Risk Metrics
+* Interactive historical equity growth curves, Sharpe ratio, maximum drawdown calculations, and win-rate distribution charts.
+
+### 8. End-to-End Browser Testing
+* Playwright E2E test suite validating real-time tick streaming, order ticket execution, and dynamic RTL/LTR language toggling across Chrome, Firefox, and WebKit.
 
 ---
 
-## 7. Azure Deployment & DevOps Guide
+## 8. Azure Deployment & DevOps Guide
 
 ### Deployment Architecture & Assessment Alignment
 
@@ -484,127 +512,168 @@ StockSquares satisfies every dimension of this requirement:
 
 ---
 
-### GitHub Actions CI/CD Pipelines
+### Azure Deployment Explained Simply ("For Dummies" Guide)
 
-The solution includes two automated workflows in `.github/workflows/`:
+Deploying a 3-tier financial web application can sound intimidating, but it is actually very simple when broken down into its three building blocks:
 
-#### 1. Continuous Integration Pipeline (`.github/workflows/ci.yml`)
-* **Triggers**: Pull requests and commits targeting `main`.
-* **Backend CI (`backend-ci`)**:
-  * Provisions Ubuntu runner with `.NET 10 SDK`.
-  * Restores dependencies with caching (`dotnet restore backend/StockSquares.slnx`).
-  * Compiles solution in Release mode (`dotnet build --no-restore -c Release`).
-  * Executes the entire 28-test xUnit test suite (`dotnet test --no-build -c Release`) and collects cross-platform code coverage (`XPlat Code Coverage`).
-* **Frontend CI (`frontend-ci`)**:
-  * Provisions Ubuntu runner with `Node.js 22` and npm cache.
-  * Deterministic dependency installation via `npm ci`.
-  * TypeScript verification and production bundle compilation (`npm run build`).
-
-#### 2. Continuous Deployment Pipeline (`.github/workflows/deploy.yml`)
-* **Triggers**: Pushes to `main` branch or manual execution via `workflow_dispatch`.
-* **Backend Job (`deploy-backend`)**:
-  * Logs in to Azure Container Registry (`azure/docker-login@v1`).
-  * Builds and pushes the multi-stage `Dockerfile.backend` image tagged with `${{ github.sha }}`.
-  * Deploys image to **Azure Container Apps** via `azure/container-apps-deploy-action@v1`.
-* **Frontend Job (`deploy-frontend`)**:
-  * Deploys `stocksquares-web` directly to **Azure Static Web Apps** via `Azure/static-web-apps-deploy@v1` using `staticwebapp.config.json` for routing and security headers.
+```
+┌─────────────────────────────────┐      ┌─────────────────────────────────┐      ┌─────────────────────────────────┐
+│     1. The Frontend Website     │      │       2. The Backend API        │      │          3. The Database        │
+│   (Azure Static Web Apps)       │ ───> │    (Azure Container Apps)       │ ───> │      (Azure SQL Database)       │
+│                                 │      │                                 │      │                                 │
+│  What it is:                    │      │  What it is:                    │      │  What it is:                    │
+│  The visual trading dashboard   │      │  The engine. It receives buy/   │      │  A secure cloud spreadsheet     │
+│  that you see in your browser   │      │  sell orders, connects to live  │      │  that permanently stores cash,  │
+│  (React 19 + Vite).             │      │  Binance prices, and does math. │      │  open positions, and trades.    │
+│                                 │      │                                 │      │                                 │
+│  Cost: 100% FREE FOREVER        │      │  Cost: FREE (180,000 vCPU-s/mo) │      │  Cost: FREE (32 GB free tier)   │
+└─────────────────────────────────┘      └─────────────────────────────────┘      └─────────────────────────────────┘
+```
 
 ---
 
-### Step-by-Step Azure Free-Tier Deployment Runbook
+### Step-by-Step Deployment Walkthrough
 
-To deploy the platform live using Azure free tiers, follow these steps using the Azure CLI (`az`):
-
-#### Step 1: Deploy Database (Azure SQL Database - Free Tier)
-Azure provides a free tier for Azure SQL Database (32 GB storage, 100,000 vCore seconds/month):
-```bash
-# Create Resource Group
-az group create --name rg-stocksquares --location eastus
-
-# Create Azure SQL Logical Server
-az sql server create \
-  --name sql-stocksquares-prod \
-  --resource-group rg-stocksquares \
-  --location eastus \
-  --admin-user cloudadmin \
-  --admin-password "<SecurePassword123!>"
-
-# Create Free Tier SQL Database
-az sql db create \
-  --resource-group rg-stocksquares \
-  --server sql-stocksquares-prod \
-  --name StockSquaresDb \
-  --edition GeneralPurpose \
-  --compute-model Serverless \
-  --family Gen5 \
-  --capacity 1 \
-  --auto-pause-delay 60
-
-# Allow Azure services to access the server
-az sql server firewall-rule create \
-  --resource-group rg-stocksquares \
-  --server sql-stocksquares-prod \
-  --name AllowAzureServices \
-  --start-ip-address 0.0.0.0 \
-  --end-ip-address 0.0.0.0
-```
-
-#### Step 2: Deploy Backend (Azure Container Apps - Consumption Tier)
-Azure Container Apps provides 180,000 vCPU-seconds and 360,000 GiB-seconds free per month:
-```bash
-# Create Azure Container Registry
-az acr create --resource-group rg-stocksquares --name acrstocksquares --sku Basic --admin-enabled true
-
-# Build & Push Backend Container
-az acr build --registry acrstocksquares --image stocksquares-api:v1 --file Dockerfile.backend .
-
-# Create Container Apps Managed Environment
-az containerapp env create --name env-stocksquares --resource-group rg-stocksquares --location eastus
-
-# Deploy Container App
-az containerapp create \
-  --name app-stocksquares-api \
-  --resource-group rg-stocksquares \
-  --environment env-stocksquares \
-  --image acrstocksquares.azurecr.io/stocksquares-api:v1 \
-  --target-port 5000 \
-  --ingress external \
-  --min-replicas 1 \
-  --max-replicas 3 \
-  --cpu 0.5 \
-  --memory 1.0Gi \
-  --env-vars \
-    ASPNETCORE_ENVIRONMENT=Production \
-    ASPNETCORE_HTTP_PORTS=5000 \
-    ConnectionStrings__DefaultConnection="Server=tcp:sql-stocksquares-prod.database.windows.net,1433;Initial Catalog=StockSquaresDb;Persist Security Info=False;User ID=cloudadmin;Password=<SecurePassword123!>;MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" \
-    CorsSettings__AllowedOrigins__0="https://<frontend-static-web-app-domain>.azurestaticapps.net"
-```
-
-#### Step 3: Deploy Frontend (Azure Static Web Apps - Free Tier)
-Azure Static Web Apps offers free hosting, custom domains, and automatic SSL:
-```bash
-# Deploy Static Web App connected to your GitHub repository
-az staticwebapp create \
-  --name web-stocksquares \
-  --resource-group rg-stocksquares \
-  --location eastus2 \
-  --source https://github.com/samimohameed/TechLead \
-  --branch main \
-  --app-location "stocksquares-web" \
-  --output-location "dist"
-```
-The command generates an deployment API token and automatically adds the workflow secret to GitHub.
+#### Prerequisites: What You Need First
+1. **A Free Azure Account**: Sign up at [azure.microsoft.com/free](https://azure.microsoft.com/free) (gives you 12 months of free services + $200 free credit).
+2. **A GitHub Account**: Where your repository is hosted ([https://github.com/samimohamed/TechLead](https://github.com/samimohamed/TechLead)).
+3. **Azure CLI installed** (optional, if using command line): Run `brew install azure-cli` on Mac.
 
 ---
 
-### Security & Secret Governance
-* **No Hardcoded Secrets**: All connection strings and environment configurations utilize standard placeholders (`localhost:1433`, `YourStrong@Passw0rd`) in source control.
-* **Production Secret Injection**: Cloud credentials, database passwords, and ACR tokens are managed strictly via **GitHub Repository Secrets** (`ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD`, `AZURE_CONTAINER_APP_NAME`, `AZURE_STATIC_WEB_APPS_API_TOKEN`) and Azure Container App Secrets.
-* **Security Headers**: `stocksquares-web/staticwebapp.config.json` enforces enterprise HTTP headers including `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and strict Content Security Policies (`CSP`).
+#### Step 1: Create the Cloud Database (Azure SQL Database - Free Tier)
+*Why we do this first:* The backend needs a place to store trades and balances before it can turn on.
+
+* **In the Azure Portal (Click-by-Click):**
+  1. Open [portal.azure.com](https://portal.azure.com) and search for **"SQL Database"** in the top search bar. Click **Create**.
+  2. **Resource Group**: Click *Create new* -> Name it `rg-stocksquares`.
+  3. **Database name**: Enter `StockSquaresDb`.
+  4. **Server**: Click *Create new* -> Enter server name (e.g. `sql-stocksquares-prod`), set Authentication to *SQL Authentication*, set Login to `cloudadmin` and choose a secure password (e.g. `P@ssw0rdStock2026!`).
+  5. **Compute + storage**: Click *Configure database* -> Select **General Purpose - Serverless** -> Check **"Apply Free Limit"** (gives you 32 GB storage and 100,000 compute seconds free each month!).
+  6. **Networking**: Under *Firewall rules*, turn **"Allow Azure services and resources to access this server"** to **YES**.
+  7. Click **Review + Create**, then click **Create**. Done!
+  8. **Save your Connection String**: Go to your new database -> Click **Connection strings** on the left menu -> Copy the ADO.NET connection string. It looks like:
+     ```
+     Server=tcp:sql-stocksquares-prod.database.windows.net,1433;Initial Catalog=StockSquaresDb;User ID=cloudadmin;Password=YourPasswordHere;Encrypt=True;TrustServerCertificate=False;
+     ```
 
 ---
 
-## 8. AI Assistance Transparency Report
+#### Step 2: Deploy the Backend API (.NET 10 on Azure Container Apps)
+*Why we do this:* This runs our .NET 10 API server 24/7 in the cloud inside a lightweight container.
+
+* **Using the Azure CLI (Easiest & Fastest):**
+  Open your terminal on your Mac and paste these 4 commands:
+
+  ```bash
+  # 1. Log in to Azure
+  az login
+
+  # 2. Create a free Container Registry to hold your backend image
+  az acr create --resource-group rg-stocksquares --name acrstocksquares --sku Basic --admin-enabled true
+
+  # 3. Build your backend container and upload it to Azure (takes ~2 minutes)
+  az acr build --registry acrstocksquares --image stocksquares-api:v1 --file Dockerfile.backend .
+
+  # 4. Create your Container Apps environment
+  az containerapp env create --name env-stocksquares --resource-group rg-stocksquares --location eastus
+
+  # 5. Launch the backend API container
+  az containerapp create \
+    --name app-stocksquares-api \
+    --resource-group rg-stocksquares \
+    --environment env-stocksquares \
+    --image acrstocksquares.azurecr.io/stocksquares-api:v1 \
+    --target-port 5000 \
+    --ingress external \
+    --min-replicas 1 \
+    --max-replicas 2 \
+    --cpu 0.5 \
+    --memory 1.0Gi \
+    --env-vars \
+      ASPNETCORE_ENVIRONMENT=Production \
+      ASPNETCORE_HTTP_PORTS=5000 \
+      ConnectionStrings__DefaultConnection="Server=tcp:sql-stocksquares-prod.database.windows.net,1433;Initial Catalog=StockSquaresDb;User ID=cloudadmin;Password=P@ssw0rdStock2026!;Encrypt=True;TrustServerCertificate=False;"
+  ```
+  *When this finishes, Azure will print your backend URL, like: `https://app-stocksquares-api.eastus.azurecontainerapps.io`.*
+
+---
+
+#### Step 3: Deploy the Frontend Website (React 19 on Azure Static Web Apps)
+*Why we do this:* This gives our website a global URL, free automatic SSL (`https://`), and connects directly to our GitHub repository.
+
+* **In the Azure Portal (Click-by-Click):**
+  1. In [portal.azure.com](https://portal.azure.com), search for **"Static Web Apps"** -> Click **Create**.
+  2. **Subscription**: Your Azure Free subscription.
+  3. **Resource Group**: Select `rg-stocksquares`.
+  4. **Name**: `web-stocksquares`.
+  5. **Plan type**: Choose **Free** ($0.00/month).
+  6. **Deployment details**: Click **Sign in with GitHub** -> Authorize Azure.
+  7. **Organization**: Select your GitHub account.
+  8. **Repository**: Select `TechLead` (or `samimohameed/TechLead`).
+  9. **Branch**: `main`.
+  10. **Build Presets**: Select **Custom** (or Vite):
+      * **App location**: `stocksquares-web`
+      * **Api location**: *(leave empty)*
+      * **Output location**: `dist`
+  11. Click **Review + Create**, then click **Create**!
+
+Azure will automatically:
+* Create a free domain name (e.g. `https://salmon-ocean-0a1b2c.azurestaticapps.net`).
+* Generate an automated GitHub Actions deployment workflow directly inside your repository.
+* Compile and deploy your React website on every `git push`!
+
+---
+
+#### Step 4: Connect the Frontend to the Backend
+Now tell the frontend where the backend lives:
+1. In the Azure Portal, open your Static Web App (`web-stocksquares`).
+2. Click **Configuration** on the left sidebar.
+3. Click **+ Add** to add an Application Setting:
+   * **Name**: `VITE_API_URL`
+   * **Value**: Your backend URL from Step 2 (e.g. `https://app-stocksquares-api.eastus.azurecontainerapps.io`)
+4. Click **Save**.
+
+Your paper trading platform is now 100% LIVE in the cloud!
+
+---
+
+### The Fully Automated GitHub Actions Way (Push-to-Deploy)
+
+Once created, you never need to touch the Azure Portal again. Whenever you make code changes and run:
+```bash
+git push origin main
+```
+GitHub Actions automatically:
+1. Runs the test suite (.NET 10 xUnit and React TypeScript build verification).
+2. Builds the new backend Docker image and pushes it to Azure Container Apps.
+3. Builds the new React frontend and uploads it to Azure Static Web Apps.
+
+#### How to configure GitHub Repository Secrets:
+Go to your repo on GitHub -> **Settings** -> **Secrets and variables** -> **Actions** -> Click **New repository secret**:
+
+| Secret Name | Where to find it |
+| :--- | :--- |
+| `ACR_LOGIN_SERVER` | Name of your registry: `acrstocksquares.azurecr.io` |
+| `ACR_USERNAME` | Registry username from Azure Container Registry Access Keys |
+| `ACR_PASSWORD` | Registry password from Azure Container Registry Access Keys |
+| `AZURE_CONTAINER_APP_NAME` | Name of your container app: `app-stocksquares-api` |
+| `AZURE_RESOURCE_GROUP` | Name of your resource group: `rg-stocksquares` |
+| `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from Azure Static Web Apps -> Manage deployment token |
+
+---
+
+### How to Verify Your Deployment
+1. **Frontend**: Open your Static Web App URL (`https://<your-app>.azurestaticapps.net`).
+   * The navbar will show a green **Connected** badge indicating that SignalR WebSockets are streaming.
+2. **Backend Swagger**: Open `https://<your-backend-url>/swagger` to test REST endpoints directly.
+3. **Database**: Place a market buy order on the UI; reload the page to verify your cash balance and open position persist across reloads.
+4. **Security & Zero Secrets**: All secrets and tokens are injected via GitHub Actions Secrets (`AZURE_STATIC_WEB_APPS_API_TOKEN`) and Azure Container App environment secrets.
+5. **Security Headers**: `stocksquares-web/staticwebapp.config.json` enforces enterprise HTTP headers including `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and strict Content Security Policies (`CSP`).
+
+---
+
+## 9. AI Assistance Transparency Report
 
 In accordance with the assessment instructions, here is the transparent disclosure of AI assistance utilized during the development of this platform:
 
