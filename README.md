@@ -141,49 +141,49 @@ stocksquares-web/
 ```mermaid
 graph TD
     subgraph UI Components
-        LP[LivePriceTable]
-        PC[PriceChart]
-        OT[OrderTicket]
-        PS[PortfolioSummary]
-        PT[PositionsTable]
-        OH[OrderHistoryTable]
+        LP["LivePriceTable"]
+        PC["PriceChart"]
+        OT["OrderTicket"]
+        PS["PortfolioSummary"]
+        PT["PositionsTable"]
+        OH["OrderHistoryTable"]
     end
 
     subgraph Reactive Domain Services
-        MS[MarketsService]
-        OS[OrdersService]
-        PoS[PortfolioService]
-        RS[RealtimeService]
+        MS["MarketsService"]
+        OS["OrdersService"]
+        PoS["PortfolioService"]
+        RS["RealtimeService"]
     end
 
     subgraph Transport Layer
-        HTTP[HttpService - Cancellable via AbortController]
-        SIG[SignalR WebSocket Client /hubs/trading]
+        HTTP["HttpService (Cancellable)"]
+        SIG["SignalR WebSocket Client"]
     end
 
     subgraph Backend Infrastructure
-        API[ASP.NET Core REST API]
-        HUB[StockSquares TradingHub]
+        API["ASP.NET Core REST API"]
+        HUB["StockSquares TradingHub"]
     end
 
-    MS -->|HTTP GET /api/markets| HTTP
-    OS -->|HTTP POST /api/orders, GET /api/orders| HTTP
-    PoS -->|HTTP GET /api/portfolio| HTTP
+    MS -->|"GET /api/markets"| HTTP
+    OS -->|"POST & GET /api/orders"| HTTP
+    PoS -->|"GET /api/portfolio"| HTTP
     HTTP --> API
 
-    RS <-->|WebSocket price$, order$, portfolio$| SIG
+    RS <-->|"WebSocket streams"| SIG
     SIG <--> HUB
 
-    RS -.->|price$ updates| MS
-    RS -.->|order$ updates| OS
-    RS -.->|portfolio$ updates| PoS
+    RS -.->|"Price updates"| MS
+    RS -.->|"Order updates"| OS
+    RS -.->|"Portfolio updates"| PoS
 
-    MS -->|Observable&lt;MarketDto[]&gt;| LP
-    MS -->|Active Market Stream| PC
-    PoS -->|Observable&lt;PortfolioDto&gt;| PS
-    PoS -->|Positions Stream| PT
-    OS -->|Observable&lt;PagedResult&lt;OrderDto&gt;&gt;| OH
-    OT -->|PlaceOrder / CancelOrder| OS
+    MS -->|"Market ticks stream"| LP
+    MS -->|"Active market stream"| PC
+    PoS -->|"Portfolio stream"| PS
+    PoS -->|"Positions stream"| PT
+    OS -->|"Paged orders stream"| OH
+    OT -->|"Place & Cancel orders"| OS
 ```
 
 ### Deep-Dive: UI Components & Capabilities
@@ -246,31 +246,31 @@ The platform is fully containerized with a production-ready, multi-container Doc
 ```mermaid
 graph TD
     subgraph Host Browser
-        USER[Web Browser / Trader]
+        USER["Web Browser / Trader"]
     end
 
     subgraph Docker Bridge Network: stocksquares-network
         subgraph Frontend Container: stocksquares-frontend
-            NGINX[Nginx 1.27 Alpine Reverse Proxy\nPort 80 -> Host 3000]
-            DIST[Compiled React 19 SPA Assets]
+            NGINX["Nginx 1.27 Alpine Reverse Proxy<br/>Port 80 to Host 3000"]
+            DIST["Compiled React 19 SPA Assets"]
         end
 
         subgraph Backend Container: stocksquares-backend
-            API[ASP.NET Core 10 Web API\nPort 5000 -> Host 5000]
-            FEED[Binance WebSocket Feed Worker]
+            API["ASP.NET Core 10 Web API<br/>Port 5000 to Host 5000"]
+            FEED["Binance WebSocket Feed Worker"]
         end
 
         subgraph Database Container: stocksquares-sqlserver
-            SQL[(Microsoft SQL Server 2022 Developer\nPort 1433 -> Host 1433)]
-            VOL[(Named Docker Volume: mssql_data)]
+            SQL[("Microsoft SQL Server 2022 Developer<br/>Port 1433 to Host 1433")]
+            VOL[("Named Docker Volume: mssql_data")]
         end
     end
 
-    USER -->|HTTP :3000 /| NGINX
-    NGINX -->|Serve Static HTML/JS/CSS| DIST
-    NGINX -->|Reverse Proxy /api/*| API
-    NGINX -->|WebSocket Upgrade /hubs/*| API
-    API -->|TCP 1433 EF Core & DBOps| SQL
+    USER -->|"HTTP :3000 /"| NGINX
+    NGINX -->|"Serve Static HTML/JS/CSS"| DIST
+    NGINX -->|"Reverse Proxy /api/*"| API
+    NGINX -->|"WebSocket Upgrade /hubs/*"| API
+    API -->|"TCP 1433 EF Core & DBOps"| SQL
     SQL --- VOL
 ```
 
@@ -404,26 +404,26 @@ If the platform grew from hundreds of users to 1,000x traffic (e.g. 100,000+ act
 
 ```mermaid
 graph TD
-    GW[API Gateway / Cloudflare] --> INGRESS[Kubernetes Ingress / Azure Container Apps]
+    GW["API Gateway / Cloudflare"] --> INGRESS["Kubernetes Ingress / Azure Container Apps"]
     
-    INGRESS --> CMD[Order Command API Workers]
-    INGRESS --> QUERY[Read API Replicas]
+    INGRESS --> CMD["Order Command API Workers"]
+    INGRESS --> QUERY["Read API Replicas"]
     
-    CMD --> KAFKA[Apache Kafka: Partitioned by Symbol]
+    CMD --> KAFKA["Apache Kafka: Partitioned by Symbol"]
     
     subgraph Core Matching Engine Cluster
-        KAFKA --> PE1[Matching Partition: BTCUSDT - LMAX Disruptor]
-        KAFKA --> PE2[Matching Partition: ETHUSDT - LMAX Disruptor]
-        KAFKA --> PE3[Matching Partition: SOLUSDT - LMAX Disruptor]
+        KAFKA --> PE1["Matching Partition: BTCUSDT - LMAX Disruptor"]
+        KAFKA --> PE2["Matching Partition: ETHUSDT - LMAX Disruptor"]
+        KAFKA --> PE3["Matching Partition: SOLUSDT - LMAX Disruptor"]
     end
     
-    PE1 --> RLOG[WAL / Append-Only Event Store]
-    PE1 --> REDIS[(Redis Distributed Cache & Order Book)]
-    PE1 --> ASP[Azure SignalR Service / WebSocket Fleet]
+    PE1 --> RLOG["WAL / Append-Only Event Store"]
+    PE1 --> REDIS[("Redis Distributed Cache & Order Book")]
+    PE1 --> ASP["Azure SignalR Service / WebSocket Fleet"]
     
-    REDIS --> PG[(PostgreSQL / Azure SQL Hyperscale Cluster)]
+    REDIS --> PG[("PostgreSQL / Azure SQL Hyperscale Cluster")]
     PG --> QUERY
-    ASP --> CLIENTS[Millions of Connected Clients]
+    ASP --> CLIENTS["Millions of Connected Clients"]
 ```
 
 ### 1. Partitioning by Symbol (Single-Writer Principle)
