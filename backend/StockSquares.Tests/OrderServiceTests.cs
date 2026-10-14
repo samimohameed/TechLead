@@ -1,11 +1,13 @@
 using System.Text.Json;
 using FluentAssertions;
 using Moq;
+using StockSquares.Application.Common;
 using StockSquares.Application.DTOs.Orders;
 using StockSquares.Application.Interfaces;
 using StockSquares.Application.Services;
 using StockSquares.Domain.Entities;
 using StockSquares.Domain.Enums;
+using StockSquares.Domain.Exceptions;
 using Xunit;
 
 namespace StockSquares.Tests;
@@ -27,7 +29,7 @@ public class OrderServiceTests
     }
 
     [Fact]
-    public async Task PlaceOrderAsync_WhenIdempotencyKeyExists_ReturnsCachedOrderWithoutCallingTradingEngine()
+    public async Task PlaceOrderAsync_WhenIdempotencyKeyExistsAndPayloadMatches_ReturnsCachedOrderWithoutCallingTradingEngine()
     {
         string idempotencyKey = "client-tx-12345";
         var cachedOrder = new OrderDto(
@@ -49,10 +51,6 @@ public class OrderServiceTests
 
         string cachedJson = JsonSerializer.Serialize(cachedOrder);
 
-        _idempotencyStoreMock
-            .Setup(s => s.GetResponseAsync(idempotencyKey, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(cachedJson);
-
         var command = new PlaceOrderCommand(
             "BTCUSDT",
             OrderType.Market,
@@ -61,6 +59,11 @@ public class OrderServiceTests
             null,
             idempotencyKey
         );
+        string expectedHash = IdempotencyUtils.ComputeRequestHash(command);
+
+        _idempotencyStoreMock
+            .Setup(s => s.GetResponseAsync(idempotencyKey, expectedHash, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cachedJson);
 
         var result = await _orderService.PlaceOrderAsync(command);
 
@@ -72,7 +75,28 @@ public class OrderServiceTests
     }
 
     [Fact]
-    public async Task PlaceOrderAsync_WhenNewOrder_DelegatesToTradingEngineAndCachesResponse()
+    public async Task PlaceOrderAsync_WhenIdempotencyKeyReusedWithDifferentPayload_ThrowsConflictException()
+    {
+        string idempotencyKey = "reused-tx-key";
+        var command = new PlaceOrderCommand("ETHUSDT", OrderType.Limit, OrderSide.Buy, 5.0m, 3000m, idempotencyKey);
+        string requestHash = IdempotencyUtils.ComputeRequestHash(command);
+
+        _idempotencyStoreMock
+            .Setup(s => s.GetResponseAsync(idempotencyKey, requestHash, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DomainException(
+                $"Idempotency key '{idempotencyKey}' was previously used with a different request payload.",
+                "IDEMPOTENCY_CONFLICT"));
+
+        var act = async () => await _orderService.PlaceOrderAsync(command);
+
+        var exception = await act.Should().ThrowAsync<DomainException>();
+        exception.Which.ErrorCode.Should().Be("IDEMPOTENCY_CONFLICT");
+
+        _tradingEngineMock.Verify(e => e.PlaceOrderAsync(It.IsAny<PlaceOrderCommand>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PlaceOrderAsync_WhenNewOrder_DelegatesToTradingEngineAndCachesResponseWithHash()
     {
         string idempotencyKey = "new-tx-999";
         var portfolioId = Guid.NewGuid();
@@ -82,8 +106,11 @@ public class OrderServiceTests
             .Setup(r => r.GetOrCreatePortfolioAsync("trader-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(portfolio);
 
+        var command = new PlaceOrderCommand("ETHUSDT", OrderType.Limit, OrderSide.Buy, 2.0m, 3200m, idempotencyKey);
+        string requestHash = IdempotencyUtils.ComputeRequestHash(command);
+
         _idempotencyStoreMock
-            .Setup(s => s.GetResponseAsync(idempotencyKey, It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetResponseAsync(idempotencyKey, requestHash, It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
         var createdDto = new OrderDto(
@@ -107,8 +134,6 @@ public class OrderServiceTests
             .Setup(e => e.PlaceOrderAsync(It.IsAny<PlaceOrderCommand>(), portfolioId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdDto);
 
-        var command = new PlaceOrderCommand("ETHUSDT", OrderType.Limit, OrderSide.Buy, 2.0m, 3200m, idempotencyKey);
-
         var result = await _orderService.PlaceOrderAsync(command);
 
         result.Should().NotBeNull();
@@ -116,6 +141,7 @@ public class OrderServiceTests
 
         _idempotencyStoreMock.Verify(s => s.SaveResponseAsync(
             idempotencyKey,
+            requestHash,
             It.Is<string>(json => json.Contains(createdDto.Id.ToString())),
             It.IsAny<TimeSpan>(),
             It.IsAny<CancellationToken>()), Times.Once);

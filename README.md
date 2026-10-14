@@ -1,8 +1,8 @@
-# StockSquares — Miniature Paper Trading Platform
+# StockSquares — Market-Tick-Driven Paper Trading Platform
 
-A high-performance paper trading platform and matching simulator engineered with **.NET 10**, **SQL Server**, and **React 19 (TypeScript + Vite)**.
+A high-performance, market-tick-driven paper trading platform and execution simulator engineered with **.NET 10**, **SQL Server**, and **React 19 (TypeScript + Vite)**.
 
-Designed with **Clean Architecture**, this platform guarantees financial correctness, serialized order execution, database transactional atomicity, idempotency, and real-time WebSocket market streaming with bilingual English and Arabic (RTL/LTR) support.
+Designed with **Clean Architecture**, this platform guarantees financial correctness, serialized order execution, database transactional atomicity, race-safe idempotency with payload conflict detection, and real-time WebSocket market streaming with bilingual English and Arabic (RTL/LTR) support.
 
 ---
 
@@ -33,7 +33,7 @@ graph TD
     end
 
     subgraph StockSquares.Domain [Financial Core & Invariants]
-        ME[Pure Matching Engine]
+        ME[Market-Tick Execution Simulator]
         ENT[Order / Position / Portfolio / Trade]
         EXC[Domain Invariants & Exceptions]
     end
@@ -61,11 +61,11 @@ graph TD
 ```
 
 ### Dependency Rules
-* **StockSquares.Domain**: Pure domain models (`Order`, `Position`, `Portfolio`, `Trade`, `PriceTick`) and execution rules (`MatchingEngine`). Completely agnostic of EF Core, SQL, HTTP, SignalR, or web frameworks.
-* **StockSquares.Application**: Orchestrates use cases (`Orders/`, `Portfolio/`, `Markets/`, `Abstractions/`). Controls the serialized trading workflow and declares port interfaces.
-* **StockSquares.Infrastructure**: Adapters for Microsoft SQL Server (`TradingDbContext`, entity configurations), WebSocket ingestion (`BinanceWebSocketFeedService`), realistic Brownian motion fallback generator, and SignalR publishing.
-* **StockSquares.Api**: ASP.NET Core 10 Web API, routing, DI configuration, Swagger/OpenAPI documentation, and endpoint filters.
-* **StockSquares.Tests**: Comprehensive 28-test xUnit unit and integration test suite covering domain execution semantics, financial invariant calculations, idempotency, command validation, and concurrent order safety.
+* **StockSquares.Domain**: Pure domain models (`Order`, `Position`, `Portfolio`, `Trade`, `PriceTick`) and execution rules (`MatchingEngine`, which evaluates virtual order fills against incoming market price ticks). Completely agnostic of EF Core, SQL, HTTP, SignalR, or web frameworks.
+* **StockSquares.Application**: Orchestrates use cases (`Orders/`, `Portfolio/`, `Markets/`, `Common/`). Controls the serialized trading workflow, canonical request hashing, and declares port interfaces.
+* **StockSquares.Infrastructure**: Adapters for Microsoft SQL Server (`TradingDbContext`, entity configurations, database-backed idempotency store), WebSocket ingestion (`BinanceWebSocketFeedService`), realistic Brownian motion fallback generator, and SignalR publishing.
+* **StockSquares.Api**: ASP.NET Core 10 Web API, routing, DI configuration, Swagger/OpenAPI documentation, and exception handling middleware (mapping idempotency conflicts to HTTP 409).
+* **StockSquares.Tests**: Comprehensive 33-test xUnit unit and integration test suite covering domain execution semantics, financial invariant calculations, race-safe idempotency under unique constraints, command validation, and concurrent order safety.
 
 ---
 
@@ -75,18 +75,21 @@ graph TD
 * All financial values (`CashBalance`, `ReservedCash`, `AverageEntryPrice`, `CurrentPrice`, `RealizedPnL`, `UnrealizedPnL`, `Trade.TotalValue`) strictly utilize the **`decimal`** type (128-bit floating-point) configured to exact SQL precision (`decimal(18, 4)` for prices and balances; `decimal(18, 8)` for quantities). No IEEE 754 binary floating-point (`float` or `double`) is permitted in financial logic.
 
 ### 2. Serialized Execution Path & Concurrency Safety
-* To prevent race conditions, balance double-spending, and phantom executions, **order validation, balance reservation, and matching execution occur inside a serialized execution coordinator** backed by database transactions.
-* **Limit Buy Orders**: Reserves required cash (`Quantity * LimitPrice`) at order entry. If execution occurs at a lower market price (price improvement), the excess reserved cash is credited back to the available cash balance.
+* To prevent race conditions, balance double-spending, and phantom executions, **order validation, balance reservation, and tick-driven execution occur inside a serialized execution coordinator** backed by database transactions.
+* **Limit Buy Orders**: Reserves required cash (`Quantity * LimitPrice`) at order entry. If execution occurs at a lower market tick price (price improvement), the excess reserved cash is credited back to the available cash balance.
 * **Limit Sell Orders**: Reserves available position quantity at entry so the trader cannot sell the same assets twice.
-* **Market Orders**: Instantly verified against available balance/holdings and executed at the current market tick.
+* **Market Orders**: Instantly verified against available balance/holdings and executed at the current market tick price.
 
 ### 3. Database Transaction Boundaries
 * Order status updates, trade records, balance changes, and position adjustments are committed **together in an atomic SQL Server transaction**.
 * **SignalR real-time events are dispatched strictly after the transaction commit succeeds**. If the transaction rolls back, no client receives phantom event notifications.
 
-### 4. Idempotency Support
-* Order submissions accept an `Idempotency-Key` HTTP header (or payload `idempotencyKey`).
-* Prior to processing, the idempotency store verifies whether the key has already been resolved. If matched, the cached response is immediately returned, preventing duplicate orders and double debiting.
+### 4. Race-Safe Transactional Idempotency & Payload Conflict Detection
+* **Database-Enforced Uniqueness**: Persists `Idempotency-Key` under a strict clustered primary key uniqueness constraint in SQL Server (`IdempotencyEntries` table).
+* **Deterministic Request Hashing**: Computes a canonical SHA-256 hash of the order payload (`Symbol`, `Side`, `Type`, `Quantity`, `LimitPrice`).
+* **Transaction Coordination**: Idempotency checks and response persistence occur within the serialized coordinator lock and database transaction, eliminating race conditions where simultaneous requests with the same key could otherwise bypass initial checks.
+* **Mismatched Payload Rejection**: Reusing an existing idempotency key with different order parameters is detected via hash comparison and rejected with `IDEMPOTENCY_CONFLICT` (HTTP 409 Conflict).
+* **Identical Retry Safe Resolution**: Retrying an identical request returns the original cached `OrderDto` response without duplicate debiting or phantom executions.
 
 ---
 
@@ -391,7 +394,8 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 | Decision | Trade-off Made | Rationale |
 | :--- | :--- | :--- |
-| **In-Memory Matching with SQL Server Persistence** | Kept order matching serialized in memory rather than a distributed message queue (Kafka/RabbitMQ). | Eliminates queue serialization latency for miniature scope while maintaining transactional durability on execution. |
+| **Market-Tick Simulator vs. Double-Auction Order Book** | Executed virtual orders against incoming real-world market price ticks rather than maintaining an internal bid/ask double-auction order book. | Directly aligns with paper-trading domain requirements: retail paper traders practice by executing against external market prices (e.g. Binance live tickers) rather than requiring an active counterparty liquidity pool. |
+| **In-Memory Coordinator with SQL Server Persistence** | Kept order matching serialized in memory rather than a distributed message queue (Kafka/RabbitMQ). | Eliminates queue serialization latency for miniature scope while maintaining transactional durability on execution. |
 | **Direct Repository Pattern vs MediatR** | Implemented direct typed services (`OrderService`, `PortfolioService`) instead of CQRS/MediatR handlers. | Eliminates unnecessary abstraction layers and ceremony for an assignment of this scope, maximizing code readability and debuggability. |
 | **Hybrid Price Ingestion** | Binance Public WebSocket with automated Brownian Motion fallback generator. | Ensures 100% platform uptime and testability even in environments where Binance WebSocket endpoints are restricted, offline, or rate-limited. |
 | **Client-Side Snapshot Refresh on Reconnect** | Full state refresh via REST after SignalR reconnection rather than gap-fill event sequencing. | Simpler, resilient consistency model that guarantees UI sync without complex client-side vector clocks or re-ordering buffers. |
@@ -447,18 +451,20 @@ graph TD
 
 Given additional engineering runway beyond the initial 6-hour assessment scope, the following enterprise capabilities would be prioritized:
 
-1. **Advanced Order Types & Time-in-Force**:
+1. **Exchange-Style Double-Auction Order Book**:
+   * Expand from market-tick paper trading to an internal L2/L3 order book matcher with price-time priority matching between internal market makers and retail participants.
+2. **Advanced Order Types & Time-in-Force**:
    * Stop-Loss & Take-Profit bracket orders that automatically attach to executed positions.
    * Time-In-Force (TIF) policies: Good-Til-Cancelled (GTC), Immediate-or-Cancel (IOC), and Fill-or-Kill (FOK).
-2. **Partial Fills & Realistic Liquidity Slippage**:
+3. **Partial Fills & Realistic Liquidity Slippage**:
    * Simulate realistic market depth where large market orders experience volume-weighted average price (VWAP) slippage as they consume order book liquidity.
-3. **Live Level 2 Order Book (Depth of Market) Visualization**:
+4. **Live Level 2 Order Book (Depth of Market) Visualization**:
    * Real-time bid/ask order book ladder showing cumulative volume depth curves with sub-second WebSocket updates.
-4. **Multi-Tenancy & Secure Authentication**:
+5. **Multi-Tenancy & Secure Authentication**:
    * ASP.NET Core Identity with JWT bearer tokens, refresh token rotation, and multi-tenant portfolio segregation.
-5. **Historical Portfolio Analytics & Risk Metrics**:
+6. **Historical Portfolio Analytics & Risk Metrics**:
    * Interactive historical equity growth curves, Sharpe ratio, maximum drawdown calculations, and win-rate distribution charts.
-6. **End-to-End Browser Testing**:
+7. **End-to-End Browser Testing**:
    * Playwright E2E test suite validating real-time tick streaming, order ticket execution, and dynamic RTL/LTR language toggling across Chrome, Firefox, and WebKit.
 
 ---

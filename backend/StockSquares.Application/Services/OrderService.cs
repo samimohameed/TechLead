@@ -25,9 +25,13 @@ public class OrderService : IOrderService
 
     public async Task<OrderDto> PlaceOrderAsync(PlaceOrderCommand command, CancellationToken cancellationToken = default)
     {
-        if (!string.IsNullOrWhiteSpace(command.IdempotencyKey))
+        string? idempotencyKey = string.IsNullOrWhiteSpace(command.IdempotencyKey) ? null : command.IdempotencyKey.Trim();
+        string? requestHash = idempotencyKey != null ? IdempotencyUtils.ComputeRequestHash(command) : null;
+
+        // 1. Initial check: If key already resolved, return original result. Reject if payload mismatched.
+        if (idempotencyKey != null && requestHash != null)
         {
-            var cached = await _idempotencyStore.GetResponseAsync(command.IdempotencyKey.Trim(), cancellationToken);
+            var cached = await _idempotencyStore.GetResponseAsync(idempotencyKey, requestHash, cancellationToken);
             if (!string.IsNullOrEmpty(cached))
             {
                 var cachedOrder = JsonSerializer.Deserialize<OrderDto>(cached);
@@ -41,10 +45,11 @@ public class OrderService : IOrderService
         var portfolio = await _repository.GetOrCreatePortfolioAsync(DefaultUserId, cancellationToken);
         var placedOrder = await _tradingEngine.PlaceOrderAsync(command, portfolio.Id, cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(command.IdempotencyKey))
+        // 2. Persist key and request hash under database uniqueness constraint
+        if (idempotencyKey != null && requestHash != null)
         {
             var json = JsonSerializer.Serialize(placedOrder);
-            await _idempotencyStore.SaveResponseAsync(command.IdempotencyKey.Trim(), json, TimeSpan.FromHours(24), cancellationToken);
+            await _idempotencyStore.SaveResponseAsync(idempotencyKey, requestHash, json, TimeSpan.FromHours(24), cancellationToken);
         }
 
         return placedOrder;

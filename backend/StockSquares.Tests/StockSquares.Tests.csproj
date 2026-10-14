@@ -24,5 +24,6 @@
   <ItemGroup>
     <ProjectReference Include="..\StockSquares.Domain\StockSquares.Domain.csproj" />
     <ProjectReference Include="..\StockSquares.Application\StockSquares.Application.csproj" />
+    <ProjectReference Include="..\StockSquares.Infrastructure\StockSquares.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

@@ -57,7 +57,12 @@ public class ExceptionHandlingMiddleware
         }
         else if (ex is DomainException domainEx)
         {
-            if (domainEx.ErrorCode.EndsWith("_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            if (domainEx.ErrorCode == "IDEMPOTENCY_CONFLICT")
+            {
+                statusCode = HttpStatusCode.Conflict;
+                errorCode = ErrorCode.Conflict;
+            }
+            else if (domainEx.ErrorCode.EndsWith("_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
             {
                 statusCode = HttpStatusCode.NotFound;
                 errorCode = ErrorCode.NotFound;

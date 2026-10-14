@@ -1,3 +1,4 @@
+using StockSquares.Application.Common;
 using StockSquares.Application.DTOs.Orders;
 using StockSquares.Application.Events;
 using StockSquares.Application.Interfaces;
@@ -15,18 +16,21 @@ public class TradingEngine : ITradingEngine
     private readonly IPriceFeedService _priceFeed;
     private readonly IRealtimePublisher _realtimePublisher;
     private readonly IMatchingEngine _matchingEngine;
+    private readonly IIdempotencyStore? _idempotencyStore;
     private static readonly SemaphoreSlim _executionLock = new(1, 1);
 
     public TradingEngine(
         ITradingRepository repository,
         IPriceFeedService priceFeed,
         IRealtimePublisher realtimePublisher,
-        IMatchingEngine matchingEngine)
+        IMatchingEngine matchingEngine,
+        IIdempotencyStore? idempotencyStore = null)
     {
         _repository = repository;
         _priceFeed = priceFeed;
         _realtimePublisher = realtimePublisher;
         _matchingEngine = matchingEngine;
+        _idempotencyStore = idempotencyStore;
     }
 
     public async Task<OrderDto> PlaceOrderAsync(PlaceOrderCommand command, Guid portfolioId, CancellationToken cancellationToken = default)
@@ -36,9 +40,26 @@ public class TradingEngine : ITradingEngine
         OrderUpdatedEvent? orderEvent = null;
         PortfolioUpdatedEvent? portfolioEvent = null;
 
+        string? idempotencyKey = string.IsNullOrWhiteSpace(command.IdempotencyKey) ? null : command.IdempotencyKey.Trim();
+        string? requestHash = idempotencyKey != null ? IdempotencyUtils.ComputeRequestHash(command) : null;
+
         await _executionLock.WaitAsync(cancellationToken);
         try
         {
+            // Inside the execution lock: check if key was already resolved by a concurrent request
+            if (_idempotencyStore != null && idempotencyKey != null && requestHash != null)
+            {
+                var cached = await _idempotencyStore.GetResponseAsync(idempotencyKey, requestHash, cancellationToken);
+                if (!string.IsNullOrEmpty(cached))
+                {
+                    var cachedOrder = System.Text.Json.JsonSerializer.Deserialize<OrderDto>(cached);
+                    if (cachedOrder != null)
+                    {
+                        return cachedOrder;
+                    }
+                }
+            }
+
             await using var tx = await _repository.BeginTransactionAsync(cancellationToken);
 
             portfolio = await _repository.GetPortfolioByIdAsync(portfolioId, cancellationToken)
