@@ -17,15 +17,15 @@ jobs:
     - name: Log in to Azure Container Registry
       uses: azure/docker-login@v1
       with:
-        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+        login-server: acrstocksquaressami.azurecr.io
         username: ${{ secrets.ACR_USERNAME }}
         password: ${{ secrets.ACR_PASSWORD }}
 
     - name: Build and Push Backend Image
       run: |
-        docker build -f Dockerfile.backend -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:v1 -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }} .
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:v1
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }}
+        REGISTRY="acrstocksquaressami.azurecr.io"
+        docker build -f Dockerfile.backend -t "${REGISTRY}/stocksquares-api:v1" .
+        docker push "${REGISTRY}/stocksquares-api:v1"
 
   deploy-frontend:
     name: Deploy Frontend (Azure Static Web Apps)
