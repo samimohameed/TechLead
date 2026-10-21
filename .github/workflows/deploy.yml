@@ -9,39 +9,33 @@ jobs:
   deploy-backend:
     name: Build & Deploy Backend (Azure Container Apps)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
     - name: Log in to Azure Container Registry
+      if: ${{ secrets.ACR_LOGIN_SERVER != '' }}
       uses: azure/docker-login@v1
-      if: env.ACR_LOGIN_SERVER != ''
       with:
         login-server: ${{ secrets.ACR_LOGIN_SERVER }}
         username: ${{ secrets.ACR_USERNAME }}
         password: ${{ secrets.ACR_PASSWORD }}
-      env:
-        ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
 
     - name: Build and Push Backend Image
-      if: env.ACR_LOGIN_SERVER != ''
+      if: ${{ secrets.ACR_LOGIN_SERVER != '' }}
       run: |
-        docker build -f Dockerfile.backend -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }} .
+        docker build -f Dockerfile.backend -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:v1 -t ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }} .
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:v1
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }}
-      env:
-        ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
 
     - name: Deploy to Azure Container App
       uses: azure/container-apps-deploy-action@v1
-      if: env.AZURE_CONTAINER_APP_NAME != ''
+      if: ${{ secrets.AZURE_CONTAINER_APP_NAME != '' && secrets.AZURE_CREDENTIALS != '' }}
       with:
         containerAppName: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
         resourceGroup: ${{ secrets.AZURE_RESOURCE_GROUP }}
         imageToDeploy: ${{ secrets.ACR_LOGIN_SERVER }}/stocksquares-api:${{ github.sha }}
-      env:
-        AZURE_CONTAINER_APP_NAME: ${{ secrets.AZURE_CONTAINER_APP_NAME }}
 
   deploy-frontend:
     name: Deploy Frontend (Azure Static Web Apps)
