@@ -10,13 +10,15 @@ rm -f "${OUTPUT_ZIP}"
 
 # Create zip excluding binaries, dependencies, and build artifacts
 zip -r "${OUTPUT_ZIP}" . \
-  -x "*.git*" \
+  -x ".git/*" \
+  -x ".git" \
   -x "*node_modules*" \
   -x "*/bin/*" \
   -x "*/obj/*" \
   -x "*dist*" \
   -x "*.vs*" \
   -x "*.DS_Store*" \
+  -x "*.pdf" \
   -x "${OUTPUT_ZIP}"
 
 echo "Done! Created ${OUTPUT_ZIP} successfully."
