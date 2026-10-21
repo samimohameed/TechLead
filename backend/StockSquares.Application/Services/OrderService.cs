@@ -6,21 +6,11 @@ using StockSquares.Domain.Exceptions;
 
 namespace StockSquares.Application.Services;
 
-/// <summary>
-/// Order service coordinating order submissions, cancellations, and history queries.
-/// Configured explicitly as a single-user assessment demonstration environment ("trader-1").
-/// In a multi-tenant production system, user and portfolio identity is extracted from authenticated JWT/OAuth2 claims.
-/// </summary>
 public class OrderService : IOrderService
 {
     private readonly ITradingEngine _tradingEngine;
     private readonly ITradingRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
-
-    /// <summary>
-    /// Explicit single-user assessment demo identifier.
-    /// All operations in this evaluation environment operate on the default portfolio ("trader-1").
-    /// </summary>
     private const string DefaultUserId = "trader-1";
 
     public OrderService(
